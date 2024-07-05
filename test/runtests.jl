@@ -7,8 +7,10 @@ using JET
     @testset "Code quality (Aqua.jl)" begin
         Aqua.test_all(Garden)
     end
-    @testset "Code linting (JET.jl)" begin
-        JET.test_package(Garden; target_defined_modules = true)
+    if VERSION >= v"1.7"
+        @testset "Code linting (JET.jl)" begin
+            JET.test_package(Garden; target_defined_modules = true)
+        end
     end
     # Write your tests here.
 end
