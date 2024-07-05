@@ -11,7 +11,7 @@ function probe(examples::Vector{<:IOExample}, iterator::ProgramIterator, max_tim
     # store a set of all the results of evaluation programs
     eval_cache = Set()
     state = nothing
-    grammar = get_grammar(iterator.solver)
+    grammar = HerbSearch.get_grammar(iterator.solver)
     symboltable = SymbolTable(grammar)
     # all partial solutions that were found so far
     all_selected_psols = Set{ProgramCache}()

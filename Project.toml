@@ -4,7 +4,9 @@ version = "0.1.0"
 
 [deps]
 Herb = "c09c6b7f-4f63-49de-90d9-97a3563c0f4a"
+HerbGrammar = "4ef9e186-2fe5-4b24-8de7-9f7291f24af7"
+HerbSearch = "3008d8e8-f9aa-438a-92ed-26e9c7b4829f"
 
 [compat]
-julia = "1.6.7"
 Herb = "^0.3.0"
+julia = "1.6.7"
