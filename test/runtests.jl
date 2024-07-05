@@ -12,5 +12,6 @@ using JET
             JET.test_package(Garden; target_defined_modules = true)
         end
     end
+    include("test_probe.jl")
     # Write your tests here.
 end
