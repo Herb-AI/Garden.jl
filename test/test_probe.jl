@@ -24,6 +24,7 @@ end
     input = [example.in for example in examples]
     output = [example.out for example in examples]
 
+    symboltable = SymbolTable(grammar)
 
     cost_functions = [HerbSearch.calculate_rule_cost_size, HerbSearch.calculate_rule_cost_prob]
     select_functions = [HerbSearch.selectpsol_all_cheapest, HerbSearch.selectpsol_first_cheapest, HerbSearch.selectpsol_largest_subset]
