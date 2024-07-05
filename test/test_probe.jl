@@ -1,5 +1,20 @@
-using Herb.HerbGrammar
-using Herb.HerbSearch
+using Garden.Herb
+using Garden.Herb.HerbInterpret
+using Garden.Herb.HerbSearch
+using Garden.Herb.HerbGrammar
+using Garden.Herb.HerbSpecification
+
+my_replace(x, y, z) = replace(x, y => z, count=1)
+
+grammar = @pcsgrammar begin
+    0.18818:S = arg
+    0.18818:S = ""
+    0.18818:S = "<"
+    0.18818:S = ">"
+    0.18818:S = my_replace(S, S, S)
+    0.05905:S = S * S
+end
+
 
 @testset "Running probe" begin
     examples = [
@@ -9,7 +24,6 @@ using Herb.HerbSearch
     input = [example.in for example in examples]
     output = [example.out for example in examples]
 
-    symboltable = SymbolTable(grammar)
 
     cost_functions = [HerbSearch.calculate_rule_cost_size, HerbSearch.calculate_rule_cost_prob]
     select_functions = [HerbSearch.selectpsol_all_cheapest, HerbSearch.selectpsol_first_cheapest, HerbSearch.selectpsol_largest_subset]
@@ -33,9 +47,11 @@ using Herb.HerbSearch
                 HerbSearch.select_partial_solution(partial_sols::Vector{ProgramCache}, all_selected_psols::Set{ProgramCache}) = select_func(partial_sols, all_selected_psols)
 
                 deep_copy_grammar = deepcopy(grammar_to_use)
+                symboltable = SymbolTable(grammar_to_use)
+
                 iter = HerbSearch.GuidedSearchIterator(deep_copy_grammar, :S, examples, symboltable)
                 max_time = 5
-                runtime = @timed program = probe(examples, iter, max_time, 100)
+                runtime = @timed program = HerbSearch.probe(examples, iter, max_time, 100)
                 expression = rulenode2expr(program, grammar_to_use)
                 @test runtime.time <= max_time
 
