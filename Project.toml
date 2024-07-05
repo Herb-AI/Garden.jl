@@ -9,4 +9,4 @@ HerbSearch = "3008d8e8-f9aa-438a-92ed-26e9c7b4829f"
 
 [compat]
 Herb = "^0.3.0"
-julia = "1.6.7"
+julia = "^1.8"

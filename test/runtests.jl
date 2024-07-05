@@ -18,4 +18,8 @@ using JET
         include("test_probe.jl")
         # Write your tests here.
     end
+    @testset "Code linting (JET.jl)" begin
+        JET.test_package(Garden; target_defined_modules = true)
+    end
+    # Write your tests here.
 end
