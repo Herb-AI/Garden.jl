@@ -11,4 +11,7 @@ using JET
         JET.test_package(Garden; target_defined_modules = true)
     end
     # Write your tests here.
+    @testset "Garden tests" begin 
+        include("test_frangel/test_frangel.jl")
+    end
 end
