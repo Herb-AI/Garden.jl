@@ -1,5 +1,9 @@
 module Garden
 
-greet() = print("Hello World!")
+using DocStringExtensions
+using Herb
+
+include("dreamcoder/method.jl")
+export dreamcoder, decide_dreamcoder, modify_grammar_dreamcoder
 
 end # module Garden

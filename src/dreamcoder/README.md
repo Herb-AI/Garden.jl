@@ -1,0 +1,23 @@
+# DreamCoder
+
+[Publication (Open Access)](https://doi.org/10.1145/3453483.3454080)
+
+```
+@inproceedings{DBLP:conf/pldi/EllisWNSMHCST21,
+  author       = {Kevin Ellis and
+                  Catherine Wong and
+                  Maxwell I. Nye and
+                  Mathias Sabl{\'{e}}{-}Meyer and
+                  Lucas Morales and
+                  Luke B. Hewitt and
+                  Luc Cary and
+                  Armando Solar{-}Lezama and
+                  Joshua B. Tenenbaum},
+  title        = {DreamCoder: bootstrapping inductive program synthesis with wake-sleep
+                  library learning},
+  booktitle    = {{PLDI}},
+  pages        = {835--850},
+  publisher    = {{ACM}},
+  year         = {2021}
+}
+```
