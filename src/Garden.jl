@@ -1,5 +1,9 @@
 module Garden
 
-greet() = print("Hello World!")
+using DocStringExtensions
+using Herb
+
+include("probe/method.jl")
+export probe, decide_probe, modify_grammar_probe
 
 end # module Garden
