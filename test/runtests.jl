@@ -10,5 +10,9 @@ using JET
     @testset "Code linting (JET.jl)" begin
         JET.test_package(Garden; target_defined_modules = true)
     end
-    # Write your tests here.
+    for (root, dirs, files) in walkdir(@__DIR__)
+        for file in filter(contains(r"test_"), files)
+            include(file)
+        end
+    end
 end
