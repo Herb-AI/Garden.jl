@@ -13,6 +13,7 @@ using Herb.HerbSpecification: IOExample, Problem
     result = frangel(
         BFSIterator,
         grammar,
+        :Int,
         problem,
         10,
         20
