@@ -1,9 +1,15 @@
-using Herb.HerbCore: AbstractRuleNode, AbstractGrammar
+using Herb.HerbCore: AbstractRuleNode, AbstractGrammar, get_rule
 using Herb.HerbSpecification: AbstractSpecification, Problem
 using Herb.HerbSearch: ProgramIterator, evaluate
 using Herb.HerbInterpret: SymbolTable
 using Herb.HerbConstraints: get_grammar, freeze_state
-using Herb.HerbGrammar: rulenode2expr, isterminal, iscomplete
+using Herb.HerbGrammar: rulenode2expr, isterminal, iscomplete, add_rule!
+
+@enum SynthResult optimal_program=1 suboptimal_program=2
+
+struct NoProgramFoundError <: Exception
+    message::String
+end
 
 
 """
@@ -11,54 +17,55 @@ using Herb.HerbGrammar: rulenode2expr, isterminal, iscomplete
 
 Synthesize a program using the `grammar` that follows the `spec` following the method from 
 ["FrAngel: component-based synthesis with control structures"](https://doi.org/10.1145/3290386).
+
+Constructs an iterator of type `iterator_type`. Iteratively, collects promising programs, mines fragments from them and adds them to the grammar. 
+This is then re-started with the updated grammar.
+
+- `frangel_iterations` determines how many iterations of search are run
+- `max_iterations` puts a bound on how many programs should be enumerated within one search procedure.
+- `max_iteration_time` limits the time the iterator has for each search. Note that this time is only checked whenever a program is iterated and thus may take slightly longer than the given time.
 ```
 """
 function frangel(
         iterator_type::Type{T},
         grammar::AbstractGrammar,
         starting_sym::Symbol,
-        problem::Problem,
-        budget::Int,
-        max_total_iterations::Int;
+        problem::Problem;
+        max_iterations::Int=typemax(Int),
+        frangel_iterations::Int=3,
         max_iteration_time::Int=typemax(Int),
         kwargs...
-)::AbstractRuleNode where T<:ProgramIterator
+)::Union{AbstractRuleNode, Nothing} where T<:ProgramIterator
     # FrAngel config arguments
-    num_frangel_steps = 3
 
-    for frangel_iteration in 1:num_frangel_steps
+    for frangel_iteration in 1:frangel_iterations
         # Gets an iterator with some limit (the low-level budget)
-        iterator = construct_iterator(iterator_type, grammar, starting_sym)
+        iterator = construct_iterator(iterator_type, grammar, starting_sym; kwargs...)
 
         # Run a budgeted search
-        promising_programs = get_promising_programs(iterator, problem; max_time=max_iteration_time, max_enumerations=max_total_iterations)
-        println(promising_programs)
-        println(typeof(promising_programs))
+        promising_programs, result_flag = get_promising_programs(iterator, problem; max_time=max_iteration_time, max_enumerations=max_iterations)
 
+        if result_flag == optimal_program
+            return only(promising_programs) # returns the only element
+        end
+
+        # Throw an error if no programs were found.
         if length(promising_programs) == 0
-            error("Not implemented yet.")
+            throw(NoProgramFoundError("No promising program found for the given specification. Try exploring more programs."))
         end
 
         # Extract fragments
         fragments = mine_fragments(grammar, promising_programs)
-        println("Fragments: $fragments")
+
+        # Select fragments that should be added to the gramamr
+        selected_fragments = select_fragments(fragments)
 
         # Modify grammar
-        add_fragments_to_grammar!(fragments, grammar)
+        modify_grammar_frangel!(selected_fragments, grammar)
     end
 
-    #   - This is a normal iterator
-    # - Collect (partial) successes
-    #   - Function to define success, which is just % of examples solved by default
-    #   - Function takes any kind of specification
-    #   - Boolean output: should the program be saved or not?
-    # - Modify the grammar
-    #   - Function to modify the grammar based on the successes
-    #   - Takes the successes (saved programs)
-    #   - Modify the grammar: in place or return a new one, TBD
-    # - Rinse and repeat
-    #   - Function defining high-level budget
-    #   - For now, just a parameter defining the number of overall runs of budgeted search
+    @warn "No solution found."
+    return nothing
 end
 
 
@@ -66,34 +73,89 @@ end
     $(TYPEDSIGNATURES)
 
 Decide whether to keep a program, or discard it, based on the specification.
+Returns a score where score=1 yields the program immediately.
 """
 function decide_frangel(
         program::AbstractRuleNode,
         problem::Problem,
         grammar::ContextSensitiveGrammar,
         symboltable::SymbolTable
-)::Bool 
+)
     expr = rulenode2expr(program, grammar)
     score = evaluate(problem, expr, symboltable, shortcircuit=false)
-    return score > 0
+    return score
 end
 
 """
     $(TYPEDSIGNATURES)
 
-Modify the grammar based on the programs kept during the `decide` step.
+Modify the grammar based on the fragments mined from the programs kept during the `decide` step.
+This function adds "Fragment_{type}" to the grammar to denote added fragments.
 """
-function modify_grammar_frangel(
-        saved_programs::AbstractVector{<:AbstractRuleNode},
-        grammar::AbstractGrammar
-)::AbstractGrammar 
+function modify_grammar_frangel!(
+        fragments::AbstractVector{<:AbstractRuleNode},
+        grammar::AbstractGrammar;
+        max_fragment_rules::Int=typemax{Int}
+)
 
+    for f in fragments
+        ind = get_rule(f)
+        type = grammar.types[ind]
+        frag_type = Symbol("Fragment_", type)
+
+        # Add fragment_{type} to the grammar if not present yet
+        if !haskey(grammar.bytype, frag_type)
+            #@TODO substitute fragment rules
+            add_rule!(grammar, Meta.parse("$type = $frag_type"))
+        end
+
+        expr = rulenode2expr(f, grammar)
+        add_rule!(grammar, Meta.parse("$frag_type = $expr"))
+    end
 end
-
 
 """
     $(TYPEDSIGNATURES)
 
+Selects the smallest (fewest number of nodes) fragments from the set of mined fragments. 
+`num_programs` determines how many programs should be selected.
+"""
+function select_smallest_fragments(
+    fragments::Set{AbstractRuleNode};
+    num_programs::Int=3
+)::AbstractVector{<:AbstractRuleNode}
+    sorted_nodes = sort(collect(fragments), by = x -> length(x))
+    
+    # Select the top 3 elements
+    return sorted_nodes[1:min(num_programs, length(sorted_nodes))] 
+end
+
+"""
+    $(TYPEDSIGNATURES)
+
+Selects the shallowest (smallest depth) fragments from the set of mined fragments. 
+`num_programs` determines how many programs should be selected.
+"""
+function select_shallowest_fragments(
+    fragments::Set{AbstractRuleNode};
+    num_programs::Int=3
+)::AbstractVector{<:AbstractRuleNode}
+    sorted_nodes = sort(collect(fragments), by = x -> depth(x))
+    
+    # Select the top 3 elements
+    return sorted_nodes[1:min(num_programs, length(sorted_nodes))] 
+end
+
+select_fragments(fragments::Set{AbstractRuleNode}) = select_smallest_fragments(fragments; num_programs=3)
+
+"""
+    $(TYPEDSIGNATURES)
+
+Iterates over the solutions to find partial or full solutions.
+Takes an iterator to enumerate programs. Quits when `max_time` or `max_enumerations` is reached.
+If the program solves the problem, it is returned with the `optimal_program` flag.
+If a program solves some of the problem (e.g. some but not all examples) it is added to the list of `promising_programs`.
+The set of promising programs is returned eventually.
 """
 function get_promising_programs(
     iterator::ProgramIterator,
@@ -101,7 +163,7 @@ function get_promising_programs(
     max_time = typemax(Int),
     max_enumerations = typemax(Int),
     mod::Module=Main
-)::Set{AbstractRuleNode}
+)::Tuple{Set{AbstractRuleNode}, SynthResult}
     start_time = time()
     grammar = get_grammar(iterator.solver)
     symboltable :: SymbolTable = SymbolTable(grammar, mod)
@@ -112,7 +174,12 @@ function get_promising_programs(
         # Create expression from rulenode representation of AST
 
         # Evaluate the expression
-        if decide_frangel(candidate_program, problem, grammar, symboltable)
+
+        score = decide_frangel(candidate_program, problem, grammar, symboltable)
+        if score == 1
+            push!(promising_programs, freeze_state(candidate_program))
+            return (promising_programs, optimal_program) 
+        elseif score > 0
             push!(promising_programs, freeze_state(candidate_program))
         end
 
@@ -122,7 +189,7 @@ function get_promising_programs(
         end
     end
 
-    return promising_programs
+    return (promising_programs, suboptimal_program)
 end
 
 """
@@ -141,9 +208,6 @@ All the found fragments in the provided program.
 """
 function mine_fragments(grammar::AbstractGrammar, program::AbstractRuleNode)::Set{AbstractRuleNode}
     fragments = Set{AbstractRuleNode}()
-    prinltn("program: $program")
-    prinltn("program: $(isterminal(program))")
-    prinltn("program: $(iscomplete(program))")
     # Push terminals as they are
     if !isterminal(grammar, program)
         # Only complete programs count are considered
@@ -160,16 +224,8 @@ end
 """
     $(TYPEDSIGNATURES)
 
-Finds all the fragments from the provided `programs` set. The result is a set of the distinct fragments found within all programs.
-A fragment is any complete subprogram of the original program.
-
-# Arguments
-- `grammar`: The grammar rules of the program.
-- `programs`: A set of programs to mine fragments for.
-
-# Returns
-All the found fragments in the provided programs.
-
+Finds fragments from the set of programs. Internally uses [`mine_fragments`](@ref) on each element of the set. 
+Returns a set of all fragments found.
 """
 function mine_fragments(grammar::AbstractGrammar, programs::Set{AbstractRuleNode})::Set{AbstractRuleNode}
     fragments = reduce(union, mine_fragments(grammar, p) for p in programs)
@@ -177,21 +233,4 @@ function mine_fragments(grammar::AbstractGrammar, programs::Set{AbstractRuleNode
         delete!(fragments, program)
     end
     fragments
-end
-
-"""
-    $(TYPEDSIGNATURES)
-
-
-"""
-function add_fragments_to_grammar!(fragments::Set{AbstractRuleNode}, grammar::AbstractGrammar)
-    for f in fragments
-        println("fragment: $f")
-        error()
-
-        ind = get_rule(f)
-        type = grammar.types[ind]
-        expr = rulenode2expr(f, grammar)
-        add_rule!(grammar, Meta.parse("$type = $expr"))
-    end
 end
