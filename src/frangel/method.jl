@@ -95,7 +95,7 @@ This function adds "Fragment_{type}" to the grammar to denote added fragments.
 function modify_grammar_frangel!(
         fragments::AbstractVector{<:AbstractRuleNode},
         grammar::AbstractGrammar;
-        max_fragment_rules::Int=typemax{Int}
+        max_fragment_rules::Int=typemax(Int)
 )
 
     for f in fragments
