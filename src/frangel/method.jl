@@ -195,15 +195,9 @@ end
 """
     $(TYPEDSIGNATURES)
 
-Finds all the fragments from the provided `program`. The result is a set of the distinct fragments, generated recursively by going over all children.
-A fragment is any complete subprogram of the original program.
+Finds all the fragments from the `program` defined over the `grammar`.
 
-# Arguments
-- `grammar`: The grammar rules of the program.
-- `program`: The program to mine fragments for.
-
-# Returns
-All the found fragments in the provided program.
+The result is a set of the distinct program fragments, generated recursively by iterating over all children. A fragment is any complete subprogram of the original program.
 
 """
 function mine_fragments(grammar::AbstractGrammar, program::AbstractRuleNode)::Set{AbstractRuleNode}
