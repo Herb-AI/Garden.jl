@@ -166,7 +166,7 @@ function get_promising_programs(
 )::Tuple{Set{AbstractRuleNode}, SynthResult}
     start_time = time()
     grammar = get_grammar(iterator.solver)
-    symboltable :: SymbolTable = SymbolTable(grammar, mod)
+    symboltable :: SymbolTable = grammar2symboltable(grammar, mod)
 
     promising_programs = Set{AbstractRuleNode}()
 
