@@ -1,5 +1,9 @@
 module Garden
 
-greet() = print("Hello World!")
+using DocStringExtensions
+
+include("frangel/method.jl")
+
+export FrAngel
 
 end # module Garden
