@@ -1,8 +1,13 @@
-using Herb.HerbCore: AbstractRuleNode, AbstractGrammar
-using Herb.HerbGrammar: normalize!, init_probabilities!
+module Probe
+
+using DocStringExtensions
+using Garden: SynthResult, optimal_program, suboptimal_program
+using Herb.HerbCore: AbstractRuleNode, AbstractGrammar, rulesoftype
+using Herb.HerbGrammar: normalize!, init_probabilities!, ContextSensitiveGrammar, rulenode2expr, grammar2symboltable
 using Herb.HerbSpecification: AbstractSpecification, Problem
-using Herb.HerbConstraints: freeze_state
-using Herb.HerbSearch: @programiterator, evaluate
+using Herb.HerbInterpret: SymbolTable
+using Herb.HerbConstraints: freeze_state, get_grammar
+using Herb.HerbSearch: MLFSIterator, evaluate, ProgramIterator, log_probability
 
 
 """
@@ -16,19 +21,18 @@ function probe(
         grammar::AbstractGrammar,
         starting_sym::Symbol,
         problem::Problem;
-        max_iterations::Int = typemax(Int),
         probe_cycles::Int = 3,
+        max_iterations::Int = typemax(Int),
         max_iteration_time::Int = typemax(Int),
         kwargs...
-)::Union{AbstractRuleNode, Nothing}# where {T <: ProgramIterator}
+)::Union{AbstractRuleNode, Nothing}
     if isnothing(grammar.log_probabilities)
         init_probabilities!(grammar)
     end
 
     for _ in 1:probe_cycles
         # Gets an iterator with some limit (the low-level budget)
-        # iterator = iterator_type(grammar, starting_sym; kwargs...)
-        iterator = ProbabilisticTopDownIterator(grammar, starting_sym; kwargs...)
+        iterator = MLFSIterator(grammar, starting_sym; kwargs...)
 
         # Run a budgeted search
         promising_programs, result_flag = get_promising_programs_with_fitness(
@@ -54,60 +58,6 @@ function probe(
 end
 
 
-Base.@doc """
-    @programiterator ProbabilisticTopDownIterator() <: TopDownIterator
-
-A top-down iterator that enumerates solutions by decreasing probability.
-""" ProbabilisticTopDownIterator
-@programiterator ProbabilisticTopDownIterator() <:TopDownIterator
-
-"""
-    derivation_heuristic(iter::ProbabilisticTopDownIterator, domain::Vector{Int})
-
-Define `derivation_heuristic` for the iterator type `ProbabilisticTopDownIterator`. 
-Decides for a domain in which order they should be enumerated. This will invert the enumeration order if probabilities are equal.
-"""
-function derivation_heuristic(iter::ProbabilisticTopDownIterator, domain::Vector{Int})
-    log_probs = get_grammar(iter).log_probabilities
-    return sort(domain, by=i->log_probs[i], rev=true) # have highest log_probability first
-end
-
-"""
-    $(TYPEDSIGNATURES)
-
-Rewrite the priority function of the `ProbabilisticTopDownIterator``. The priority value of a tree is then the max_rulenode_log_probability within the represented uniform tree.
-The value is negated as lower priority values are popped earlier.
-"""
-function priority_function(
-    ::ProbabilisticTopDownIterator, 
-    grammar::AbstractGrammar, 
-    current_program::AbstractRuleNode, 
-    parent_value::Union{Real, Tuple{Vararg{Real}}},
-    isrequeued::Bool
-)
-    #@TODO Add requeueing and calculate values from previous values
-    return -max_rulenode_log_probability(current_program, grammar) 
-end
-
-"""
-    max_rulenode_log_probability(rulenode::AbstractRuleNode, grammar::AbstractGrammar)
-
-Calculates the highest possible probability within an `AbstractRuleNode`. 
-That is, for each node and its domain, get the highest probability and multiply it with the probabilities of its children, if present. 
-As we are operating with log probabilities, we sum the logarithms.
-"""
-max_rulenode_log_probability(rulenode::AbstractRuleNode, grammar::AbstractGrammar) = rulenode_log_probability(rulenode, grammar)
-function max_rulenode_log_probability(hole::UniformHole, grammar::AbstractGrammar)
-    max_index = argmax(i -> grammar.log_probabilities[i], findall(hole.domain))
-    return log_probability(grammar, min_index) + sum((max_rulenode_log_probability(c, grammar) for c ∈ node.children), init=1)
-end
-
-function max_rulenode_log_probability(hole::Hole, grammar::AbstractGrammar)
-    max_index = argmax(i -> grammar.log_probabilities[i], findall(hole.domain))
-    return log_probability(grammar, max_index)
-end
-
-
 """
     $(TYPEDSIGNATURES)
 
@@ -120,6 +70,7 @@ function decide_probe(
         grammar::ContextSensitiveGrammar,
         symboltable::SymbolTable)::Real
     expr = rulenode2expr(program, grammar)
+    println("expr:", expr)
     fitness = evaluate(problem, expr, symboltable, shortcircuit = false)
     return fitness
 end
@@ -198,4 +149,12 @@ function get_promising_programs_with_fitness(
     end
 
     return (promising_programs, suboptimal_program)
+end
+
+export 
+    probe, 
+    decide_probe, 
+    modify_grammar_probe!,
+    get_promising_programs_with_fitness
+
 end

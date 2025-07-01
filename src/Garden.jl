@@ -1,10 +1,13 @@
 module Garden
 
 using DocStringExtensions
-using Herb
 
 include("utils.jl")
 include("probe/method.jl")
-export probe, decide_probe, modify_grammar_probe
+
+export 
+    Probe,
+    NoProgramFoundError,
+    SynthResult
 
 end # module Garden
