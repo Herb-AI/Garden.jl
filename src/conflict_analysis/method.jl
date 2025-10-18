@@ -5,9 +5,9 @@ using ConflictAnalysis
 using MLStyle
 using Herb.HerbCore: AbstractRuleNode, AbstractGrammar
 using Herb.HerbSpecification: IOExample, Problem
-using Herb.HerbSearch: ProgramIterator, add_constraints!
 using Herb.HerbConstraints: AbstractGrammarConstraint, get_grammar, freeze_state
 using Herb.HerbInterpret: SymbolTable
+using HerbSearch: ProgramIterator, add_constraints!
 using HerbGrammar: grammar2symboltable, rulenode2expr, addconstraint!, ContextSensitiveGrammar
 
 function run_problem(
