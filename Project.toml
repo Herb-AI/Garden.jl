@@ -3,10 +3,13 @@ uuid = "22d0bc84-1826-4aaf-b584-c2a6a91114a2"
 version = "0.1.0"
 
 [deps]
+ConflictAnalysis = "46d8c867-898e-41d3-9160-29f023e63481"
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 Herb = "c09c6b7f-4f63-49de-90d9-97a3563c0f4a"
+HerbGrammar = "4ef9e186-2fe5-4b24-8de7-9f7291f24af7"
+MLStyle = "d8e11817-5142-5d16-987a-aa16d5891078"
 
 [compat]
 DocStringExtensions = "0.9.3"
-Herb = "0.4.1"
+MLStyle = "0.4.17"
 julia = "^1.8"
