@@ -6,14 +6,14 @@ using MLStyle
 using Herb.HerbCore: AbstractRuleNode, AbstractGrammar
 using Herb.HerbSpecification: IOExample, Problem
 using Herb.HerbConstraints: AbstractGrammarConstraint, get_grammar, freeze_state
-using Herb.HerbInterpret: SymbolTable
+using Herb.HerbInterpret: SymbolTable, execute_on_input
 using HerbSearch: ProgramIterator, add_constraints!
 using HerbGrammar: grammar2symboltable, rulenode2expr, addconstraint!, ContextSensitiveGrammar
 
 function run_problem(
     problem::Problem,
     iterator::ProgramIterator,
-    interpret::Function;
+    interpret::Union{Function, Nothing} = nothing;
     max_time = typemax(Int),
     max_enumerations = typemax(Int),
     mod::Module = Main,
@@ -31,8 +31,9 @@ function run_problem(
 
     techs = build_techniques(techniques)
     for (i, candidate_program) ∈ enumerate(iterator)
-        # println("Program: ", rulenode2expr(candidate_program, grammar))
-        output, result, counter_example = evaluate(candidate_program, problem, grammar_tags, interpret)
+        expr = rulenode2expr(candidate_program, grammar)
+        
+        output, result, counter_example = isnothing(interpret) ? evaluate(expr, problem, symboltable) : evaluate(candidate_program, problem, grammar_tags, interpret)
         counter += 1
 
         if result == success
@@ -41,12 +42,16 @@ function run_problem(
             if conflict_analysis
                 ctx = ConflictContext(grammar, symboltable, candidate_program, output, counter_example)
                 constraints, grammar_constraints = run_conflict_pipeline(techs, ctx)
-
+                
                 for c in grammar_constraints
                     addconstraint!(grammar, c.cons)
                 end
                 if !isempty(constraints)
                     add_constraints!(iterator, AbstractGrammarConstraint[c.cons for c in constraints])
+                    if length(candidate_program) > 0
+                        # println(expr)
+                        # println(constraints)
+                    end
                 end
 
                 cons_counter += length(constraints) + length(grammar_constraints)
@@ -95,23 +100,56 @@ end
 
 Custom execute_on_input function that uses a given interpret function.
 """
-function execute_on_input(program::AbstractRuleNode, grammar_tags::Dict{Int, Any}, input::Dict{Symbol, T}, interpret::Function)::Any where T
+function ConflictAnalysis.execute_on_input(program::AbstractRuleNode, grammar_tags::Dict{Int, Any}, input::Dict{Symbol, T}, interpret::Function)::Any where T
     return interpret(program, grammar_tags, input)
 end
 
 @enum EvalResult success=1 failed=2 crashed=3
 """
-    evaluate(problem::Problem{Vector{IOExample}}, expr::Any, symboltable::SymbolTable)
+    evaluate(
+        expr::Any,
+        problem::Problem{<:AbstractVector{<:IOExample}},
+        symboltable::SymbolTable
+    )::Tuple{Union{Any, Nothing}, EvalResult, Union{<:IOExample, Nothing}}
 
-Evaluate the expression on the examples.
+Evaluate the expression on the examples using the given symboltable.
+"""
+function evaluate(
+    expr::Any,
+    problem::Problem{<:AbstractVector{<:IOExample}},
+    symboltable::SymbolTable
+)::Tuple{Union{Any, Nothing}, EvalResult, Union{<:IOExample, Nothing}}
+    output = nothing
 
-Returns a score in the interval [0, 1]
+    for example ∈ problem.spec
+        try
+            output = execute_on_input(symboltable, expr, example.in)
+            if (output != example.out)
+                return (output, failed, example)
+            end
+        catch e
+            return (nothing, crashed, example)
+        end
+    end
+
+    return (output, success, nothing)
+end
+
+"""
+    evaluate(
+        program::AbstractRuleNode,
+        problem::Problem{<:AbstractVector{<:IOExample}},
+        grammar_tags::Dict{Int, Any},
+        interpret::Union{Function, Nothing} = nothing
+    )::Tuple{Union{Any, Nothing}, EvalResult, Union{<:IOExample, Nothing}}
+
+Evaluate the program on the examples using a custom interpret function if provided.
 """
 function evaluate(
     program::AbstractRuleNode,
     problem::Problem{<:AbstractVector{<:IOExample}},
     grammar_tags::Dict{Int, Any},
-    interpret::Function
+    interpret::Union{Function, Nothing} = nothing
 )::Tuple{Union{Any, Nothing}, EvalResult, Union{<:IOExample, Nothing}}
     output = nothing
 
