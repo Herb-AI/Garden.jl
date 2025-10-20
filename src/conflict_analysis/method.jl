@@ -32,7 +32,6 @@ function run_problem(
     techs = build_techniques(techniques)
     for (i, candidate_program) ∈ enumerate(iterator)
         expr = rulenode2expr(candidate_program, grammar)
-        
         output, result, counter_example = isnothing(interpret) ? evaluate(expr, problem, symboltable) : evaluate(candidate_program, problem, grammar_tags, interpret)
         counter += 1
 
@@ -48,10 +47,6 @@ function run_problem(
                 end
                 if !isempty(constraints)
                     add_constraints!(iterator, AbstractGrammarConstraint[c.cons for c in constraints])
-                    if length(candidate_program) > 0
-                        # println(expr)
-                        # println(constraints)
-                    end
                 end
 
                 cons_counter += length(constraints) + length(grammar_constraints)
