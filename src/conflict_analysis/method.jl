@@ -10,6 +10,8 @@ using Herb.HerbInterpret: SymbolTable, execute_on_input
 using HerbSearch: ProgramIterator, add_constraints!
 using HerbGrammar: grammar2symboltable, rulenode2expr, addconstraint!, ContextSensitiveGrammar
 
+include("overhead.jl")
+
 function run_problem(
     problem::Problem,
     iterator::ProgramIterator,
@@ -20,8 +22,8 @@ function run_problem(
     conflict_analysis::Bool = true,
     techniques::Vector{Symbol} = [:ERA, :MUC, :SeAn]
 
-)::Tuple{Union{AbstractRuleNode, Nothing}, Int64, Int64, Float64}
-    start_time   = time()
+)::Tuple{Union{AbstractRuleNode, Nothing}, Int64, Int64, OverheadMetrics}
+    start_time   = time_ns()
     solver       = iterator.solver
     grammar      = get_grammar(solver)
     grammar_tags = get_relevant_tags(grammar)
@@ -29,18 +31,30 @@ function run_problem(
     counter      = 0
     cons_counter = 0
 
+    metrics = OverheadMetrics();
     techs = build_techniques(techniques)
-    for (i, candidate_program) ∈ enumerate(iterator)
+
+    start = @measure! (metrics, :propagation_ns) iterate(iterator)
+    if isnothing(start)
+        metrics.total_ns = (time_ns() - start_time)
+        return (nothing, counter, cons_counter, metrics)
+    end
+
+    candidate_program, state = start
+    while true
         expr = rulenode2expr(candidate_program, grammar)
-        output, result, counter_example = isnothing(interpret) ? evaluate(expr, problem, symboltable) : evaluate(candidate_program, problem, grammar_tags, interpret)
+        output, result, counter_example = isnothing(interpret) ? 
+            evaluate(expr, problem, symboltable) : 
+            evaluate(candidate_program, problem, grammar_tags, interpret)
         counter += 1
 
         if result == success
-            return (freeze_state(candidate_program), counter, cons_counter, round(time() - start_time, digits=2))
+            metrics.total_ns = (time_ns() - start_time)
+            return (freeze_state(candidate_program), counter, cons_counter, metrics)
         else
             if conflict_analysis
                 ctx = ConflictContext(grammar, symboltable, candidate_program, output, counter_example)
-                constraints, grammar_constraints = run_conflict_pipeline(techs, ctx)
+                constraints, grammar_constraints = @measure! (metrics, :analysis_ns) run_conflict_pipeline(techs, ctx)
                 
                 for c in grammar_constraints
                     addconstraint!(grammar, c.cons)
@@ -53,10 +67,16 @@ function run_problem(
             end
         end
 
-        if i > max_enumerations || time() - start_time > max_time
+        if counter > max_enumerations || float(time_ns() - start_time) / 1e9 > max_time
             println("Stopping criteria met")
             break
         end
+
+        next = @measure! (metrics, :propagation_ns) iterate(iterator, state)
+        if isnothing(next)
+            break
+        end
+        candidate_program, state = next
     end
 
     # Clean up
@@ -68,7 +88,8 @@ function run_problem(
         end
     end
 
-    return (nothing, counter, cons_counter, round(time() - start_time, digits=2))
+    metrics.total_ns = (time_ns() - start_time)
+    return (nothing, counter, cons_counter, metrics)
 end
 
 """
@@ -164,5 +185,4 @@ end
 
 export
     run_problem
-
 end
