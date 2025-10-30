@@ -339,6 +339,8 @@ export
     synth_with_aux,
     evaluate_with_aux,
     aulile,
-    construct_aux_function
+    construct_aux_function,
+    AuxFunction,
+    SearchStats
 
 end
