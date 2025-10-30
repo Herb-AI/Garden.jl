@@ -3,10 +3,20 @@ uuid = "22d0bc84-1826-4aaf-b584-c2a6a91114a2"
 version = "0.1.0"
 
 [deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Clingo_jll = "e1d4ad0e-dc8b-5d2d-8155-e9a55b531f08"
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 Herb = "c09c6b7f-4f63-49de-90d9-97a3563c0f4a"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
+Aqua = "0.8.14"
+Clingo_jll = "5.7.1"
 DocStringExtensions = "0.9.3"
 Herb = "0.4.1"
+JET = "0.9.20"
+JSON = "1.2.0"
+Test = "1.11.0"
 julia = "^1.8"
