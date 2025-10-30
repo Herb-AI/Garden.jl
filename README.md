@@ -7,3 +7,14 @@
 <div align="center">
   <img src="https://github.com/user-attachments/assets/1323efc7-a708-45f4-bb26-509fbcbf7f93" alt="Cropped Image" width="500"/>
 </div>
+
+
+`Garden.jl` contains examples of how to use [Herb.jl](https://herb-ai.github.io/Herb.jl/dev/) to implement custom synthesizers. You can use the examples as a starting point for your own implementation. 
+
+## Structure
+
+Each synthesizer has its own dedicated folder with the suggested structure:
+
+- `method.jl` — Main functionality for the synthesizer. Helper functions may go in other files.
+- `README.md` — Description of the synthesizer, what it does, inputs, and how to run it.
+- `ref.bib` — Bibliography or references related to the implementation.
