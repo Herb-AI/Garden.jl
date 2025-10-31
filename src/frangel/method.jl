@@ -50,7 +50,8 @@ function frangel(
         iterator = iterator_type(grammar, starting_sym; kwargs...)
 
         # Run a budgeted search
-        promising_programs, result_flag = get_promising_programs(
+        promising_programs,
+        result_flag = get_promising_programs(
             iterator, problem; max_time = max_iteration_time,
             max_enumerations = max_iterations)
 
