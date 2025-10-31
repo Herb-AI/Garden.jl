@@ -289,7 +289,8 @@ function construct_aux_function(
         ::Type{OutputType}
 ) where {OutputType}
     AuxFunction(
-        (expected::IOExample{<:Any, <:OutputType}, actual::OutputType) -> dist_fn(
+        (expected::IOExample{<:Any, <:OutputType},
+            actual::OutputType) -> dist_fn(
             expected.out, actual),
         problem::Problem -> begin
             score = 0

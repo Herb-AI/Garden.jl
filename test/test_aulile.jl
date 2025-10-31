@@ -66,7 +66,8 @@ function levenshtein!(
 end
 
 levenshtein_aux = AuxFunction(
-    (expected::IOExample{<:Any, <:AbstractString}, actual::AbstractString) -> levenshtein!(
+    (expected::IOExample{<:Any, <:AbstractString},
+        actual::AbstractString) -> levenshtein!(
         expected.out, actual, 1, 1, 1),
     problem::Problem -> begin
         score = 0
