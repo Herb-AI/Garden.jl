@@ -1,7 +1,11 @@
+using DocStringExtensions
 using JSON
 
 """
-    Parses a list of programs to be compressed into an ASP model
+    $(TYPEDSIGNATURES)
+
+Parses a list of programs into a Clingo format.
+Returns Clingo encoding of the ASTs.
 """
 function parse_programs(programs::Vector{RuleNode})::String
     result = ""
@@ -18,10 +22,15 @@ function parse_programs(programs::Vector{RuleNode})::String
     return result
 end
 
+"""
+    $(TYPEDSIGNATURES)
+
+Recursively parses AST into a clingo format. 
+Returns the parsed AST and index of the last node in the model.
+"""
 function _parse_rulenode(rulenode::Union{AbstractRuleNode, AbstractUniformHole}, node_index::Int)::Tuple{String, Int}
     if rulenode isa Hole
         rule = -1
-        # return "\nnode($node_index, $rule).", node_index
         return "", node_index
     else
         rule = get_rule(rulenode)
@@ -34,6 +43,11 @@ function _parse_rulenode(rulenode::Union{AbstractRuleNode, AbstractUniformHole},
     return result, node_index
 end
 
+"""
+    $(TYPEDSIGNATURES)
+
+Recursively parses ASTs. Intended to be called on children of a rule.
+"""
 function _parse_rulenodes(rulenodes::Vector{AbstractRuleNode}, parent_node_index::Int)::Tuple{String, Int}
     child_node_index = parent_node_index
     result = ""
@@ -55,7 +69,7 @@ end
 
 
 """
-    read_last_witness_from_json(json_content::String)
+    $(TYPEDSIGNATURES)
 
 Reads a JSON file and returns the parsed content.
 
@@ -84,6 +98,8 @@ end
 
 
 """
+    $(TYPEDSIGNATURES)
+
 Structure for pasing compression trees given by the 
 """
 struct TreeNode
@@ -99,12 +115,15 @@ struct TreeNode
 end
 
 """
-    parse_compressed_subtrees(compressed_rulenode::Vector{String})
+    $(TYPEDSIGNATURES)
 
 Parses string containing compression found by the model into trees.
 # Arguments
-- `compressed_rulenode::Vector{String}`: vector containing strings in format 
-"comp_root(X)", "comp_node(X, RULE)", "comp_edge(FROM, TO, POS)" and "assign(COMP_NODE, AST_NODE)"
+- `compressed_rulenode`: vector containing strings in following format 
+    - `comp_root(X)`
+    - `comp_node(X, RULE)`
+    - `comp_edge(FROM, TO, POS)`
+    - `assign(COMP_NODE, AST_NODE)`
 """
 function parse_compressed_subtrees(compressed_rulenode::Vector{String})
     roots = filter(s -> startswith(s, "comp_root("), compressed_rulenode)
@@ -123,6 +142,7 @@ function parse_compressed_subtrees(compressed_rulenode::Vector{String})
     for root in roots
         id_rule  = match(r"\((\d+), ?(\d+)", root)
         @assert id_rule !== nothing && length(id_rule) == 2
+        @assert id_rule[1] !== nothing && id_rule[2] !== nothing
         r_id, rule = parse(Int64, id_rule[1]), parse(Int64, id_rule[2])
         root = TreeNode(r_id)
         push!(trees, root)
@@ -134,6 +154,7 @@ function parse_compressed_subtrees(compressed_rulenode::Vector{String})
     for node in nodes
         n_r = match(r"comp_node\((\d+), ?(\d+)", node)
         @assert n_r !== nothing && length(n_r) == 2
+        @assert n_r[1] !== nothing && n_r[2] !== nothing
         node_to_rule[parse(Int64, n_r[1])] = parse(Int64, n_r[2])
     end
     
@@ -142,6 +163,7 @@ function parse_compressed_subtrees(compressed_rulenode::Vector{String})
     for edge in edges_str
         s_d = match(r"comp_edge\((\d+), ?(\d+), ?(\d+)", edge)
         @assert s_d !== nothing && length(s_d) == 3
+        @assert s_d[1] !== nothing && s_d[2] !== nothing && s_d[3] !== nothing
         from, to, pos = parse(Int64, s_d[1]), parse(Int64 ,s_d[2]), parse(Int64, s_d[3])
         push!(edges, (from, to, pos))
     end
@@ -161,19 +183,17 @@ function parse_compressed_subtrees(compressed_rulenode::Vector{String})
 end
 
 """
-    construct_subtrees(grammar::AbstractGrammar, 
-    compression_trees::Vector{TreeNode}, 
-    node2rule::Dict{Int64, Int64})::Vector{RuleNode}
+    $(TYPEDSIGNATURES)
 
 Constructs a list of rules from a set of compression trees.
 
 # Arguments
-- `grammar::AbstractGrammar`: The original grammar.
-- `compression_trees::Vector{TreeNode}`: A vector of `TreeNode` objects representing the compressed subtrees.
-- `node2rule::Dict{Int64, Int64}`: A dictionary mapping node IDs to their corresponding rule in the grammar.
+- `grammar`: The original grammar.
+- `compression_trees`: A vector of `TreeNode` objects representing the compressed subtrees.
+- `node2rule`: A dictionary mapping node IDs to their corresponding rule in the grammar.
 
 # Returns
-- `Vector{RuleNode}`: A vector of `RuleNode` objects, each representing a rule constructed from the compression trees.
+- `Vector`: A vector of `RuleNode` objects, each representing a rule constructed from the compression trees.
 """
 function construct_subtrees(grammar::AbstractGrammar, compression_trees::Vector{TreeNode}, node2rule::Dict{Int64, Int64})
     rules = []
@@ -185,6 +205,11 @@ function construct_subtrees(grammar::AbstractGrammar, compression_trees::Vector{
 end
 
 
+"""
+    $(TYPEDSIGNATURES)
+
+Helper function to recursively construct a list of rules from a set of conpression trees.
+"""
 function _construct_rule(comp_tree::TreeNode, grammar::AbstractGrammar, node2rule::Dict{Int64, Int64})
     rule_id = node2rule[comp_tree.id]
     child_types = grammar.childtypes[rule_id]
@@ -206,11 +231,12 @@ end
 
 
 """
+    $(TYPEDSIGNATURES)
+    
 # Arguments
 - rule::RuleNode - rule in which nonbranching elements will be removed.
 - grammar::AbstractGrammar - Grammar of the rule. Used to get types of rules used in the first argument.
 
-# Description
 If a rule has nonbranching elements (e.g. rule A that can only go to B that goes only to C), such sequences will be replaced with
 A -> C. The first symbol of such sequence will be start, and last will be end. Holes are not replaced.
 """

@@ -1,4 +1,4 @@
-##### Iplementation of Compression algorithm for library learning by Stef Rasing and Danila Bren, implemeted as a part of RIIDM 2025.
+##### Iplementation of Compression algorithm for library learning.
 
 `method.jl` imports functoin `refactor_grammar` that does the compression given some example *programs* on the provided *grammar*. 
 The function takes following arguments:

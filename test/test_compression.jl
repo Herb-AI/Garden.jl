@@ -22,7 +22,6 @@ end
 
 @testset verbose=true "Compression" begin
     @testset "Compression 1+_" begin
-        # only wotks with additional rules
         # 1 + (1 + (Num 3))
         # 1 + (1 + (Num 4))
         # 1 + (1 + (Num 5))
@@ -35,9 +34,7 @@ end
     end
 
 
-    @testset "Compression 1+_ with int in between" begin 
-        # only wotks with additional rules
-        # 1 + (1 + (Int (Num 3)))
+    @testset "Compression 1+_ with int in between" begin
         # 1 + (1 + (Int (Num 4)))
         # 1 + (1 + (Int (Num 5)))
         ast1 = RuleNode(2, [RuleNode(1), RuleNode(7, [RuleNode(11, [RuleNode(8)])])])
@@ -49,7 +46,6 @@ end
     end
 
     @testset "Compression fail - nothing to extract" begin
-        # Define two simple programs that are deemed to be useful
         # Program 1: 1 + 1
         # Program 2: 1 * 1
         ast1 = RuleNode(2, [RuleNode(1), RuleNode(1)])
@@ -73,7 +69,7 @@ end
     end
 
     @testset "Compression - 1+_" begin
-        # (1 + (1 + 1)) 2{1,3{1,1}}
+        # (1 + (1 + 1))
         # (1 + (1 - 1))
         # 1 + 1
         ast1 = RuleNode(2, [RuleNode(1), RuleNode(2, [RuleNode(1), RuleNode(1)])])
