@@ -11,17 +11,18 @@ using .Aulile
 
 # Function added from levenstein library: [https://github.com/rawrgrr/Levenshtein.jl/blob/master/src/Levenshtein.jl]
 function levenshtein!(
-    source::AbstractString,
-    target::AbstractString,
-    deletion_cost::R,
-    insertion_cost::S,
-    substitution_cost::T,
-    costs::Matrix=Array{promote_type(R, S, T)}(undef, 2, length(target) + 1)
-) where {R<:Real,S<:Real,T<:Real}
+        source::AbstractString,
+        target::AbstractString,
+        deletion_cost::R,
+        insertion_cost::S,
+        substitution_cost::T,
+        costs::Matrix = Array{promote_type(R, S, T)}(undef, 2, length(target) + 1)
+) where {R <: Real, S <: Real, T <: Real}
     cost_type = promote_type(R, S, T)
     if length(source) < length(target)
         # Space complexity of function = O(length(target))
-        return levenshtein!(target, source, insertion_cost, deletion_cost, substitution_cost, costs)
+        return levenshtein!(
+            target, source, insertion_cost, deletion_cost, substitution_cost, costs)
     else
         if length(target) == 0
             return length(source) * deletion_cost
@@ -31,7 +32,7 @@ function levenshtein!(
 
             costs[old_cost_index, 1] = 0
             for i in 1:length(target)
-                costs[old_cost_index, i+1] = i * insertion_cost
+                costs[old_cost_index, i + 1] = i * insertion_cost
             end
 
             i = 0
@@ -45,31 +46,31 @@ function levenshtein!(
                 for c in target
                     j += 1
 
-                    deletion = costs[old_cost_index, j+1] + deletion_cost
+                    deletion = costs[old_cost_index, j + 1] + deletion_cost
                     insertion = costs[new_cost_index, j] + insertion_cost
                     substitution = costs[old_cost_index, j]
                     if r != c
                         substitution += substitution_cost
                     end
 
-                    costs[new_cost_index, j+1] = min(deletion, insertion, substitution)
+                    costs[new_cost_index, j + 1] = min(deletion, insertion, substitution)
                 end
 
                 old_cost_index, new_cost_index = new_cost_index, old_cost_index
             end
 
             new_cost_index = old_cost_index
-            return costs[new_cost_index, length(target)+1]
+            return costs[new_cost_index, length(target) + 1]
         end
     end
 end
 
 levenshtein_aux = AuxFunction(
-    (expected::IOExample{<:Any,<:AbstractString}, actual::AbstractString) ->
-        levenshtein!(expected.out, actual, 1, 1, 1),
+    (expected::IOExample{<:Any, <:AbstractString}, actual::AbstractString) -> levenshtein!(
+        expected.out, actual, 1, 1, 1),
     problem::Problem -> begin
         score = 0
-        for example ∈ problem.spec
+        for example in problem.spec
             score += levenshtein!(example.out, only(values(example.in)), 1, 1, 1)
         end
         return score
@@ -121,9 +122,8 @@ end
         IOExample(Dict(:x => "978.654.0299"), "9786540299")
     ])
     test_result = aulile(problem, BFSIterator, simple_grammar, :String, :String,
-        levenshtein_aux, max_depth=2)
+        levenshtein_aux, max_depth = 2)
     @test !(test_result.program isa Nothing)
     @test test_result.score == levenshtein_aux.best_value
     program = rulenode2expr(test_result.program, simple_grammar)
 end
-

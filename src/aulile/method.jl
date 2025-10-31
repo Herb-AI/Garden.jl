@@ -8,7 +8,6 @@ using Herb.HerbInterpret
 using Herb.HerbConstraints
 using Herb.HerbSpecification
 
-
 """
 	$(TYPEDSIGNATURES)
 
@@ -36,7 +35,7 @@ Holds statistics about a search process.
 - `enumerations::Int`: The number of enumerations performed during the search.
 """
 struct SearchStats
-    program::Union{RuleNode,Nothing}
+    program::Union{RuleNode, Nothing}
     score::Number
     iterations::Int
     enumerations::Int
@@ -68,7 +67,7 @@ end
     Default auxiliary function of just checking how many tests are correct.
 """
 default_aux = AuxFunction(
-    (expected::IOExample{<:Any,<:Any}, actual::Any) -> begin
+    (expected::IOExample{<:Any, <:Any}, actual::Any) -> begin
         if expected.out == actual
             return 0
         else
@@ -102,32 +101,32 @@ Performs iterative library learning (Aulile) by enumerating programs using a gra
 - `SearchStats`: struct with the best program found, its score, number of iterations and enumerations.
 """
 function aulile(
-    problem::Problem{<:AbstractVector{<:IOExample}},
-    iter_t::Type{<:ProgramIterator},
-    grammar::AbstractGrammar,
-    start_symbol::Symbol,
-    new_rules_symbol::Symbol,
-    aux::AuxFunction;
-    interpret::Function=default_interpreter,
-    allow_evaluation_errors::Bool=false,
-    max_iterations=10000,
-    max_depth=10,
-    max_enumerations=100000,
+        problem::Problem{<:AbstractVector{<:IOExample}},
+        iter_t::Type{<:ProgramIterator},
+        grammar::AbstractGrammar,
+        start_symbol::Symbol,
+        new_rules_symbol::Symbol,
+        aux::AuxFunction;
+        interpret::Function = default_interpreter,
+        allow_evaluation_errors::Bool = false,
+        max_iterations = 10000,
+        max_depth = 10,
+        max_enumerations = 100000
 )::SearchStats
-    iter = iter_t(grammar, start_symbol, max_depth=max_depth)
+    iter = iter_t(grammar, start_symbol, max_depth = max_depth)
     best_program = nothing
     # Get initial distance of input and output
     best_score = aux.initial_score(problem)
     init_grammar_size = length(grammar.rules)
     # Main loop
-    new_rules_decoding = Dict{Int,AbstractRuleNode}()
+    new_rules_decoding = Dict{Int, AbstractRuleNode}()
     old_grammar_size = length(grammar.rules)
     total_enumerations = 0
     for i in 1:max_iterations
         stats = synth_with_aux(problem, iter, grammar, aux,
             new_rules_decoding, best_score,
-            interpret=interpret, allow_evaluation_errors=allow_evaluation_errors,
-            max_enumerations=max_enumerations)
+            interpret = interpret, allow_evaluation_errors = allow_evaluation_errors,
+            max_enumerations = max_enumerations)
         total_enumerations += stats.enumerations
         if stats.program isa Nothing
             return SearchStats(best_program, stats.score, i, total_enumerations)
@@ -149,7 +148,7 @@ function aulile(
                     old_grammar_size = length(grammar.rules)
                     new_rules_decoding[old_grammar_size] = deepcopy(stats.program)
                 end
-                iter = iter_t(grammar, start_symbol, max_depth=max_depth)
+                iter = iter_t(grammar, start_symbol, max_depth = max_depth)
             end
         end
     end
@@ -178,26 +177,26 @@ Searches for the best program that minimizes the score defined by the auxiliary 
 - `SearchStats`: object with the best program found (if any), its score, number of iterations and enumerations.
 """
 function synth_with_aux(
-    problem::Problem{<:AbstractVector{<:IOExample}},
-    iterator::ProgramIterator,
-    grammar::AbstractGrammar,
-    aux::AuxFunction,
-    new_rules_decoding::Dict{Int,AbstractRuleNode},
-    best_score::Number;
-    interpret::Function=default_interpreter,
-    allow_evaluation_errors::Bool=false,
-    max_time=typemax(Int),
-    max_enumerations=typemax(Int)
+        problem::Problem{<:AbstractVector{<:IOExample}},
+        iterator::ProgramIterator,
+        grammar::AbstractGrammar,
+        aux::AuxFunction,
+        new_rules_decoding::Dict{Int, AbstractRuleNode},
+        best_score::Number;
+        interpret::Function = default_interpreter,
+        allow_evaluation_errors::Bool = false,
+        max_time = typemax(Int),
+        max_enumerations = typemax(Int)
 )::SearchStats
     start_time = time()
     best_program = nothing
     loop_enumerations = 0
-    for (i, candidate_program) ∈ enumerate(iterator)
+    for (i, candidate_program) in enumerate(iterator)
         loop_enumerations = i
         # Evaluate the program
         score = evaluate_with_aux(problem, candidate_program, grammar, aux,
-            new_rules_decoding, interpret=interpret,
-            allow_evaluation_errors=allow_evaluation_errors)
+            new_rules_decoding, interpret = interpret,
+            allow_evaluation_errors = allow_evaluation_errors)
         # Update score if better
         if score == aux.best_value
             candidate_program = freeze_state(candidate_program)
@@ -234,17 +233,17 @@ Evaluates a candidate program over all examples in a problem using the auxiliary
 - The total distance score. If evaluation errors are disallowed and one occurs, an `EvaluationError` is thrown.
 """
 function evaluate_with_aux(
-    problem::Problem{<:AbstractVector{<:IOExample}},
-    program::Any,
-    grammar::AbstractGrammar,
-    aux::AuxFunction,
-    new_rules_decoding::Dict{Int,AbstractRuleNode};
-    interpret::Function=default_interpreter,
-    allow_evaluation_errors::Bool=false
+        problem::Problem{<:AbstractVector{<:IOExample}},
+        program::Any,
+        grammar::AbstractGrammar,
+        aux::AuxFunction,
+        new_rules_decoding::Dict{Int, AbstractRuleNode};
+        interpret::Function = default_interpreter,
+        allow_evaluation_errors::Bool = false
 )::Number
     distance_in_examples = 0
     crashed = false
-    for example ∈ problem.spec
+    for example in problem.spec
         try
             # Use the interpreter to get the output
             output = interpret(program, grammar, example, new_rules_decoding)
@@ -286,12 +285,12 @@ Constructs an `AuxFunction` object using the provided distance function `dist_fn
 # Example
 """
 function construct_aux_function(
-    dist_fn::Function,
-    ::Type{OutputType}
+        dist_fn::Function,
+        ::Type{OutputType}
 ) where {OutputType}
     AuxFunction(
-        (expected::IOExample{<:Any,<:OutputType}, actual::OutputType) ->
-            dist_fn(expected.out, actual),
+        (expected::IOExample{<:Any, <:OutputType}, actual::OutputType) -> dist_fn(
+            expected.out, actual),
         problem::Problem -> begin
             score = 0
             for example in problem.spec
@@ -303,12 +302,12 @@ function construct_aux_function(
     )
 end
 
-export 
-    synth_with_aux,
-    evaluate_with_aux,
-    aulile,
-    construct_aux_function,
-    AuxFunction,
-    SearchStats
+export
+       synth_with_aux,
+       evaluate_with_aux,
+       aulile,
+       construct_aux_function,
+       AuxFunction,
+       SearchStats
 
 end
