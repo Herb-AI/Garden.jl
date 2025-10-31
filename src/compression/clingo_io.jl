@@ -140,31 +140,29 @@ function parse_compressed_subtrees(compressed_rulenode::Vector{String})
     
     # find all roots, add them as a last seen node of their id
     for root in roots
-        id_rule  = match(r"\((\d+), ?(\d+)", root)
-        @assert id_rule !== nothing && length(id_rule) == 2
-        @assert id_rule[1] !== nothing && id_rule[2] !== nothing
+        m = match(r"\((\d+), ?(\d+)", root)
+        id_rule::Vector{String} = [id for id in m.captures if !isnothing(id)]
+
         r_id, rule = parse(Int64, id_rule[1]), parse(Int64, id_rule[2])
         root = TreeNode(r_id)
         push!(trees, root)
         node_to_rule[r_id] = rule
-        seen_nodes[r_id] = root 
+        seen_nodes[r_id] = root
     end
 
-    # build dictionary node to rule
+    # build dictionary {node: rule)
     for node in nodes
-        n_r = match(r"comp_node\((\d+), ?(\d+)", node)
-        @assert n_r !== nothing && length(n_r) == 2
-        @assert n_r[1] !== nothing && n_r[2] !== nothing
+        m = match(r"comp_node\((\d+), ?(\d+)", node)
+        n_r::Vector{String} = [r for r in m.captures if !isnothing(r)]
         node_to_rule[parse(Int64, n_r[1])] = parse(Int64, n_r[2])
     end
     
     # collect all nodes and build the trees
     edges = Vector{Tuple{Int64, Int64, Int64}}()
     for edge in edges_str
-        s_d = match(r"comp_edge\((\d+), ?(\d+), ?(\d+)", edge)
-        @assert s_d !== nothing && length(s_d) == 3
-        @assert s_d[1] !== nothing && s_d[2] !== nothing && s_d[3] !== nothing
-        from, to, pos = parse(Int64, s_d[1]), parse(Int64 ,s_d[2]), parse(Int64, s_d[3])
+        m = match(r"comp_edge\((\d+), ?(\d+), ?(\d+)", edge)
+        s_d::Vector{String} = [s for s in m.captures if !isnothing(s)]
+        from, to, pos = parse(Int64, s_d[1]), parse(Int64, s_d[2]), parse(Int64, s_d[3])
         push!(edges, (from, to, pos))
     end
 
