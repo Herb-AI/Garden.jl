@@ -4,12 +4,19 @@
 [![PkgEval](https://JuliaCI.github.io/NanosoldierReports/pkgeval_badges/G/Garden.svg)](https://JuliaCI.github.io/NanosoldierReports/pkgeval_badges/G/Garden.html)
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/1323efc7-a708-45f4-bb26-509fbcbf7f93" alt="Cropped Image" width="500"/>
-</div>
 
-
-A collection of useful examples of how to use [Herb.jl](https://herb-ai.github.io/Herb.jl/dev/) to implement custom synthesizers or re-implement existing ones. You can use the examples as a starting point for your own implementation. 
+<table>
+  <tr>
+    <td width="260" valign="top">
+      <img src="https://github.com/user-attachments/assets/1323efc7-a708-45f4-bb26-509fbcbf7f93" alt="Cropped Image" width="220"/>
+    </td>
+    <td valign="top">
+      <strong>Garden.jl</strong><br/>
+      A collection of small, focused examples showing how to use <a href="https://herb-ai.github.io/Herb.jl/dev/">Herb.jl</a>.
+      Use the examples as a starting point for your own custom synthesizers or re-implementations.
+    </td>
+  </tr>
+</table>
 
 ## Structure
 
