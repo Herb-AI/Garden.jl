@@ -9,7 +9,7 @@
 </div>
 
 
-A collection of useful examples of how to use [Herb.jl](https://herb-ai.github.io/Herb.jl/dev/) to implement custom synthesizers. You can use the examples as a starting point for your own implementation. 
+A collection of useful examples of how to use [Herb.jl](https://herb-ai.github.io/Herb.jl/dev/) to implement custom synthesizers or re-implement existing ones. You can use the examples as a starting point for your own implementation. 
 
 ## Structure
 
