@@ -4,6 +4,4 @@
             Exports `synth_with_aux`,    `evaluate_with_aux`,    `aulile`,    `construct_aux_function`
 
 
-`aulile_auxiliary_functions.jl` contains two auxiliary functoins to compute levenstein distance as discribed in the Aulile paper. 
-
 `test_aulile.jl` contains tests using strings grammar, running simple examples, including example form Aulile paper with our implementation. 
