@@ -1,6 +1,10 @@
 name = "Garden"
 uuid = "22d0bc84-1826-4aaf-b584-c2a6a91114a2"
-version = "0.1.0"
+version = "0.1.1"
+
+[deps]
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+Herb = "c09c6b7f-4f63-49de-90d9-97a3563c0f4a"
 
 [deps]
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
