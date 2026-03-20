@@ -2,8 +2,6 @@ module Garden
 
 using DocStringExtensions
 
-include("frangel/method.jl")
-
-export FrAngel
+include("FrAngel/FrAngel.jl")
 
 end # module Garden
