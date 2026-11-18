@@ -4,11 +4,15 @@ version = "0.1.1"
 
 [deps]
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 Herb = "c09c6b7f-4f63-49de-90d9-97a3563c0f4a"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 RuntimeGeneratedFunctions = "7e49a35a-f44a-4d26-94aa-eba1b4ca6b47"
 
 [compat]
 DocStringExtensions = "0.9.3"
+Downloads = "1"
 Herb = "1"
+JSON = "1"
 RuntimeGeneratedFunctions = "0.5.17"
 julia = "1.10"
