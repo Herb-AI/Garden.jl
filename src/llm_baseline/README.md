@@ -34,31 +34,68 @@ grammar + examples ──► prompt ──► LLM ──► answer text
   setting stays inductive. The defaults (1 sample, 0 repairs) are a plain one-shot
   baseline.
 
-## Quick start
+## Installation
 
-1. Install [Ollama](https://ollama.com) and pull a model:
+You need three things: Julia, a local model server, and a Julia environment with
+Garden.jl and HerbBenchmarks.jl. The baseline's only extra dependencies (`JSON`
+and the `Downloads` standard library) are installed with Garden.jl.
+
+1. **Julia 1.10 or newer.** If you don't have it, install it with
+   [juliaup](https://github.com/JuliaLang/juliaup):
 
    ```sh
-   ollama pull gpt-oss:20b
+   curl -fsSL https://install.julialang.org | sh
    ```
 
-2. Run it on a benchmark problem:
+2. **A model server.** The defaults expect [Ollama](https://ollama.com): install the
+   app (or `brew install ollama` / the Linux install script), which keeps the server
+   running in the background, then pull a model and check it answers:
 
-   ```julia
-   using Herb, HerbBenchmarks
-   using Garden.LLMBaseline: llm_synth, OllamaModel
-   import HerbBenchmarks.PBE_SLIA_Track_2019 as SLIA
-
-   pair = get_problem_grammar_pair(SLIA, "17212077")   # "01/15/2013" -> "01/2013", ...
-   interp = SLIA.make_SLIA_interpreter(pair.grammar)
-
-   program, log = llm_synth(pair.grammar, :Start, pair.problem;
-       model = OllamaModel("gpt-oss:20b"; think = "medium"),
-       interpret = interp)
-
-   rulenode2expr(program, pair.grammar)   # the synthesized program
-   log                                     # LLMSynthLog(1 model calls, 1 valid programs, solved = true, ...)
+   ```sh
+   ollama pull gpt-oss:20b        # ~14 GB download, needs ~16 GB of RAM/VRAM
+   ollama run gpt-oss:20b "hi"
    ```
+
+   Any OpenAI-compatible server works too (LM Studio, llama.cpp, MLX, vLLM). See
+   [Using another backend or model](#using-another-backend-or-model).
+
+3. **A Julia environment** that uses Garden.jl (with this baseline) and
+   HerbBenchmarks.jl. With local clones of both repositories next to each other:
+
+   ```sh
+   mkdir llm-experiments && cd llm-experiments
+   julia --project=. -e 'using Pkg;
+       Pkg.develop(path = "../Garden.jl");
+       Pkg.develop(path = "../HerbBenchmarks.jl");
+       Pkg.add("Herb")'
+   ```
+
+   Without local clones, `Pkg.add(url = "https://github.com/Herb-AI/Garden.jl")` and
+   `Pkg.add(url = "https://github.com/Herb-AI/HerbBenchmarks.jl")` do the same
+   (add `rev = "<branch>"` for an unreleased branch).
+
+## Quick start
+
+Save this as `run.jl` in your environment and run `julia --project=. run.jl`:
+
+```julia
+using Herb, HerbBenchmarks
+using Garden.LLMBaseline: llm_synth, OllamaModel
+import HerbBenchmarks.PBE_SLIA_Track_2019 as SLIA
+
+pair = get_problem_grammar_pair(SLIA, "17212077")   # "01/15/2013" -> "01/2013", ...
+interp = SLIA.make_SLIA_interpreter(pair.grammar)
+
+program, log = llm_synth(pair.grammar, :Start, pair.problem;
+    model = OllamaModel("gpt-oss:20b"; think = "medium"),
+    interpret = interp, verbose = true)
+
+println(log)        # LLMSynthLog(1 model calls, 1 valid programs, solved = true, ...)
+isnothing(program) || println(rulenode2expr(program, pair.grammar))
+```
+
+The first run takes a minute or two to compile. After that, a problem takes from
+seconds to a few minutes, depending on the model and how long it reasons.
 
 `interpret` is optional. Without it, the first answer that is a valid program of
 the grammar is returned, unchecked. With it, every candidate is run on all
@@ -241,3 +278,25 @@ total time.
 
 The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 `expr2rulenode_typed(expr, grammar, :Start)` for an expression.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `Request to … failed … Is the model server running?` | Start the Ollama app (or `ollama serve`), or check `host` / `base_url`. |
+| `HTTP 404` mentioning the model | The model isn't pulled (`ollama pull <tag>`), or the tag is misspelled; `ollama list` shows what you have. |
+| Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `num_ctx` (e.g. `65536`) and/or `num_predict` on `OllamaModel`, or lower `think`. |
+| Every attempt has fitness 0 on `Robots_2020` | Its inputs are stored under `:_arg_1_`; use `interpret = (p, ex) -> Robots_2020.interpret(p, ex.in[:_arg_1_])`. |
+| Very slow | Use a mixture-of-experts model (`gpt-oss:20b`, `gemma4:26b`), the `-mlx` builds on Apple Silicon, or `think = "low"`. |
+
+## Tests
+
+The tests use scripted fake models, so they don't need a model server:
+
+```sh
+cd Garden.jl
+julia --project -e 'using Pkg; Pkg.test()'
+```
+
+The first run takes several minutes, mostly because the package-wide JET lint
+check compiles a lot.
