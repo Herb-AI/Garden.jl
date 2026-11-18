@@ -300,3 +300,27 @@ julia --project -e 'using Pkg; Pkg.test()'
 
 The first run takes several minutes, mostly because the package-wide JET lint
 check compiles a lot.
+
+### Live tests with a real model
+
+`test/test_llm_baseline_live.jl` runs the baseline against a real model through
+Ollama: a plain model call, an easy task the model is expected to solve (`x + 1`),
+a harder task where only a valid program (or `nothing`) is required, a
+statement-sequence DSL, and the OpenAI-compatible endpoint. These tests are
+**disabled by default**; when disabled they are skipped with a log message. Enable
+them with an environment variable:
+
+```sh
+ollama pull qwen3.5:4b
+GARDEN_LLM_TESTS=true julia --project -e 'using Pkg; Pkg.test()'
+```
+
+| Variable | Default | |
+|---|---|---|
+| `GARDEN_LLM_TESTS` | `false` | `true`, `1` or `yes` enables the live tests |
+| `GARDEN_LLM_MODEL` | `qwen3.5:4b` | Ollama tag of the model to test with |
+| `GARDEN_LLM_HOST` | `http://localhost:11434` | Ollama server |
+
+Model answers vary from run to run, so a failure of the "solves `x + 1`" test with a
+small model can be bad luck rather than a bug. Look at the logged attempts before
+investigating.
