@@ -172,12 +172,12 @@ end
         @test_throws ArgumentError llm_synth(arith, :Nope, problem; model)
     end
 
-    @testset "HTTP backends build requests" begin
+    @testset "Ollama backend" begin
         @test LLM.OllamaModel("gpt-oss:20b"; think = "high").think == "high"
-        @test LLM.OpenAICompatibleModel("m"; base_url = "http://localhost:8080/v1").model == "m"
+        @test LLM.OllamaModel("qwen3.5:4b"; host = "http://h:1").host == "http://h:1"
         @test any(m -> m.ollama == LLM.DEFAULT_OLLAMA_MODEL, LLM.RECOMMENDED_MODELS)
         # Unreachable server: the failure is recorded, not thrown.
-        model = LLM.OpenAICompatibleModel("m"; base_url = "http://127.0.0.1:9/v1", timeout = 5)
+        model = LLM.OllamaModel("m"; host = "http://127.0.0.1:9", timeout = 5)
         problem = Problem([IOExample(Dict{Symbol, Any}(:x => 1), 2)])
         prog, log = llm_synth(arith, :Start, problem; model)
         @test isnothing(prog) && !isnothing(log.attempts[1].error)

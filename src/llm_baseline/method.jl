@@ -83,7 +83,7 @@ the setting stays purely inductive.
 
 # Keyword arguments
 - `model::AbstractLanguageModel = OllamaModel(DEFAULT_OLLAMA_MODEL)`: the
-  language model. See [`OllamaModel`](@ref), [`OpenAICompatibleModel`](@ref),
+  language model. See [`OllamaModel`](@ref),
   [`FunctionModel`](@ref) and `RECOMMENDED_MODELS`.
 - `prompt::AbstractPrompt = DEFAULT_PROMPT`: prompting strategy, see
   [`PromptTemplate`](@ref).

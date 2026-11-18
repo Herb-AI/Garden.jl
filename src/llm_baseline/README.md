@@ -25,8 +25,8 @@ grammar + examples ──► prompt ──► LLM ──► answer text
   benchmark name. Values are printed without module prefixes, so
   `HerbBenchmarks.String_transformations_2020.StringState(...)` is shown as
   `StringState(...)`.
-* **Pluggable models and prompts.** Any Ollama model, any OpenAI-compatible server
-  (LM Studio, llama.cpp, MLX, vLLM, SGLang, hosted APIs) or a plain Julia function.
+* **Pluggable models and prompts.** Any model served by [Ollama](https://ollama.com),
+  selected by its tag, or a plain Julia function (used by the tests).
   Prompts are templates with `{{placeholders}}`, or your own `AbstractPrompt` type.
 * **Optional sampling and repair.** You can draw `num_samples` independent answers,
   and give up to `max_repairs` rounds of feedback (the parse error, or the failing
@@ -36,7 +36,7 @@ grammar + examples ──► prompt ──► LLM ──► answer text
 
 ## Installation
 
-You need three things: Julia, a local model server, and a Julia environment with
+You need three things: Julia, Ollama, and a Julia environment with
 Garden.jl and HerbBenchmarks.jl. The baseline's only extra dependencies (`JSON`
 and the `Downloads` standard library) are installed with Garden.jl.
 
@@ -47,7 +47,7 @@ and the `Downloads` standard library) are installed with Garden.jl.
    curl -fsSL https://install.julialang.org | sh
    ```
 
-2. **A model server.** The defaults expect [Ollama](https://ollama.com): install the
+2. **Ollama.** Models are served by [Ollama](https://ollama.com): install the
    app (or `brew install ollama` / the Linux install script), which keeps the server
    running in the background, then pull a model and check it answers:
 
@@ -55,9 +55,6 @@ and the `Downloads` standard library) are installed with Garden.jl.
    ollama pull gpt-oss:20b        # ~14 GB download, needs ~16 GB of RAM/VRAM
    ollama run gpt-oss:20b "hi"
    ```
-
-   Any OpenAI-compatible server works too (LM Studio, llama.cpp, MLX, vLLM). See
-   [Using another backend or model](#using-another-backend-or-model).
 
 3. **A Julia environment** that uses Garden.jl (with this baseline) and
    HerbBenchmarks.jl. With local clones of both repositories next to each other:
@@ -173,28 +170,30 @@ Practical tips:
   Ollama's own default context is much smaller and silently truncates. Raise
   `num_predict` / `num_ctx` if answers get cut off: an attempt that ends in
   `:no_program` usually means the model ran out of tokens while thinking.
-* On Apple Silicon, MLX builds (e.g. `qwen3.8:27b-mlx`, or `mlx_lm.server` with an
-  `mlx-community` model) are usually faster than GGUF.
+* On Apple Silicon, the `-mlx` tags (e.g. `qwen3.8:27b-mlx`) are usually faster.
 * For `num_samples > 1`, set a non-zero `temperature` and a `seed`. Sample `i` uses
   `seed + i - 1`.
 
-## Using another backend or model
+## Using another model
+
+Any model in the [Ollama library](https://ollama.com/library) works: pull it and
+pass its tag.
 
 ```julia
-using Garden.LLMBaseline: OllamaModel, OpenAICompatibleModel, FunctionModel
+using Garden.LLMBaseline: OllamaModel, FunctionModel
 
 OllamaModel("qwen3.8:27b"; think = true, temperature = 0.6, num_ctx = 65536)
+OllamaModel("gpt-oss:20b"; think = "high", host = "http://other-machine:11434")
 
-# LM Studio (default base_url), llama.cpp `llama-server`, `mlx_lm.server`, vLLM, ...
-OpenAICompatibleModel("qwen/qwen3.8-27b"; base_url = "http://localhost:1234/v1")
-OpenAICompatibleModel("gpt-oss-20b"; base_url = "http://localhost:8080/v1",
-    extra = Dict("reasoning_effort" => "high"))
-
-# Anything else: a function from chat messages to the answer text.
-FunctionModel(messages -> my_inference(messages))
+# A function from chat messages to the answer text (e.g. scripted answers in tests).
+FunctionModel(messages -> "```julia\nx + 1\n```")
 ```
 
-A new backend is a subtype of `AbstractLanguageModel` with one method:
+`OllamaModel` keywords: `host`, `temperature`, `num_ctx`, `num_predict`, `think`,
+`options` (any other Ollama option) and `timeout`.
+
+Other model servers are not supported yet. A new backend is a subtype of
+`AbstractLanguageModel` with one method:
 
 ```julia
 struct MyModel <: LLMBaseline.AbstractLanguageModel end
@@ -283,7 +282,7 @@ The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 
 | Symptom | Fix |
 |---|---|
-| `Request to … failed … Is the model server running?` | Start the Ollama app (or `ollama serve`), or check `host` / `base_url`. |
+| `Request to … failed … Is Ollama running?` | Start the Ollama app (or `ollama serve`), or check `host`. |
 | `HTTP 404` mentioning the model | The model isn't pulled (`ollama pull <tag>`), or the tag is misspelled; `ollama list` shows what you have. |
 | Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `num_ctx` (e.g. `65536`) and/or `num_predict` on `OllamaModel`, or lower `think`. |
 | Every attempt has fitness 0 on `Robots_2020` | Its inputs are stored under `:_arg_1_`; use `interpret = (p, ex) -> Robots_2020.interpret(p, ex.in[:_arg_1_])`. |
@@ -291,7 +290,7 @@ The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 
 ## Tests
 
-The tests use scripted fake models, so they don't need a model server:
+The tests use scripted fake models, so they don't need Ollama:
 
 ```sh
 cd Garden.jl
@@ -306,7 +305,7 @@ check compiles a lot.
 `test/test_llm_baseline_live.jl` runs the baseline against a real model through
 Ollama: a plain model call, an easy task the model is expected to solve (`x + 1`),
 a harder task where only a valid program (or `nothing`) is required, a
-statement-sequence DSL, and the OpenAI-compatible endpoint. These tests are
+and a statement-sequence DSL. These tests are
 **disabled by default**; when disabled they are skipped with a log message. Enable
 them with an environment variable:
 

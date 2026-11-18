@@ -90,13 +90,5 @@ else
             @test any(a -> !isnothing(a.program), log.attempts)
             @test program isa RuleNode
         end
-
-        @testset "OpenAI-compatible endpoint" begin
-            oai = LiveLLM.OpenAICompatibleModel(live_model_tag;
-                base_url = rstrip(live_host, '/') * "/v1", temperature = 0.7, timeout = 600)
-            answer = LiveLLM.generate(oai,
-                [LiveLLM.ChatMessage("user", "Reply with the single word: ready")]; seed = 1)
-            @test !isempty(answer)
-        end
     end
 end
