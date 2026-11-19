@@ -34,6 +34,8 @@ grammar + examples ──► prompt ──► LLM ──► answer text
   setting stays inductive. The defaults (1 sample, 0 repairs) are a plain one-shot
   baseline.
 
+To understand or change the code, start with the [code reading guide](CODE_GUIDE.md).
+
 ## Installation
 
 You need three things: Julia, Ollama, and a Julia environment with
