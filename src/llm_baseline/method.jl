@@ -3,10 +3,9 @@ module LLMBaseline
 import Downloads
 import JSON
 import DocStringExtensions: TYPEDSIGNATURES
-import Herb: AbstractGrammar, AbstractRuleNode, RuleNode, Problem, IOExample, rulenode2expr
+import Herb: AbstractGrammar, AbstractRuleNode, RuleNode, Problem, IOExample
 
 include("backends.jl")
-include("prompts.jl")
 include("parsing.jl")
 
 """
@@ -14,14 +13,17 @@ include("parsing.jl")
 
 One model call made by [`llm_synth`](@ref).
 
-- `sample`, `round`: which independent sample and which repair round (0 = the
-  first answer) this is.
-- `response`: visible model answer (reasoning removed).
-- `code`: extracted program text (`""` if none).
-- `program`: parsed `RuleNode`, or `nothing`.
-- `error`: `GrammarParseError` or exception from the model call, or `nothing`.
-- `fitness`: fraction of examples solved (`missing` if not evaluated).
-- `seconds`: wall-clock time of the model call.
+- `sample`, `round`: which independent sample, and which repair round within it
+  (0 = the first answer).
+- `response`: the model's full answer.
+- `code`: the program text extracted from it (`""` if none).
+- `program`: the parsed `RuleNode`, or `nothing` if the answer could not be parsed.
+- `error`: why the answer could not be parsed, or `nothing`.
+- `fitness`: fraction of examples solved; `missing` without an interpreter or
+  program.
+- `failures`: `(example, output)` for each failed example, where `output` is the
+  program's output or the exception it threw.
+- `seconds`: time taken by the model call.
 """
 struct Attempt
     sample::Int
@@ -29,33 +31,13 @@ struct Attempt
     response::String
     code::String
     program::Union{Nothing, RuleNode}
-    error::Union{Nothing, Exception}
+    error::Union{Nothing, String}
     fitness::Union{Missing, Float64}
+    failures::Vector{Tuple{IOExample, Any}}
     seconds::Float64
 end
 
-"""
-    LLMSynthLog
-
-Everything that happened during a call to [`llm_synth`](@ref): the `messages` of
-the first prompt, all `attempts`, whether an exact solution was found
-(`solved`), the fitness of the returned program (`best_fitness`, `missing` when
-no interpreter was given) and the total time.
-"""
-struct LLMSynthLog
-    prompt::Vector{ChatMessage}
-    attempts::Vector{Attempt}
-    solved::Bool
-    best_fitness::Union{Missing, Float64}
-    seconds::Float64
-end
-
-function Base.show(io::IO, log::LLMSynthLog)
-    n_parsed = count(a -> !isnothing(a.program), log.attempts)
-    print(io, "LLMSynthLog(", length(log.attempts), " model calls, ", n_parsed,
-        " valid programs, solved = ", log.solved, ", best fitness = ", log.best_fitness,
-        ", ", round(log.seconds; digits = 1), " s)")
-end
+include("prompts.jl")
 
 """
     $(TYPEDSIGNATURES)
@@ -64,47 +46,33 @@ Synthesize a program for `problem` in `grammar`, starting from `starting_sym`, b
 prompting a language model.
 
 The model sees the grammar and the examples (by default nothing else, see
-[`DEFAULT_PROMPT`](@ref)) and answers with a program in the grammar's concrete
-syntax. The answer is parsed back into a derivation of the grammar, so the
-returned program is a `RuleNode` that is guaranteed to be derivable from
-`starting_sym`.
+`DEFAULT_PROMPT`) and answers with a program in the grammar's concrete syntax.
+The answer is parsed back into a derivation of the grammar, so a returned program
+is always derivable from `starting_sym`.
 
-The procedure draws `num_samples` independent answers. If an `interpret`
-function is given, each candidate is run on the examples; the first one that
-solves all examples is returned immediately and otherwise the candidate with the
-highest fitness is returned. Without `interpret`, the first candidate that is a
-valid program of the grammar is returned (no semantic check).
+`num_samples` independent conversations are tried. Within each, a failed answer
+is followed by a feedback message (the parse error, or the failing examples with
+the program's outputs) and another try, up to `max_repairs` times.
 
-With `max_repairs > 0`, an unsuccessful answer is followed by a feedback message
-(the parse error, or the examples on which the candidate fails, together with
-its actual outputs) and the model gets another try within the same
-conversation. Feedback only ever contains examples from the specification, so
-the setting stays purely inductive.
+With an `interpret` function, the first program that solves all examples is
+returned, and otherwise the program with the highest fitness. Without one, the
+first answer that parses into the grammar is returned, unchecked.
 
 # Keyword arguments
-- `model::AbstractLanguageModel = OllamaModel(DEFAULT_OLLAMA_MODEL)`: the
-  language model. See [`OllamaModel`](@ref),
-  [`FunctionModel`](@ref) and `RECOMMENDED_MODELS`.
-- `prompt::AbstractPrompt = DEFAULT_PROMPT`: prompting strategy, see
-  [`PromptTemplate`](@ref).
-- `interpret = nothing`: callable `interpret(program::RuleNode, example::IOExample)`
-  returning the program's output on the example. The interpreters produced by
-  `HerbInterpret.make_interpreter` and `make_stateful_interpreter` (and hence
-  those in HerbBenchmarks) already have this method.
-- `num_samples::Int = 1`: independent samples (use a non-zero temperature).
-- `max_repairs::Int = 0`: feedback rounds per sample.
-- `prompt_examples = nothing`: number of examples shown in the prompt (the first
-  `prompt_examples`; `nothing` = all). Candidates are always checked on all
-  examples.
-- `eq = (==)`: predicate `eq(actual, expected)` comparing outputs.
-- `allow_errors::Bool = true`: treat interpreter exceptions as failed examples
-  (otherwise rethrow).
+- `model = OllamaModel(DEFAULT_OLLAMA_MODEL)`: the language model; see
+  `OllamaModel` and `RECOMMENDED_MODELS`.
+- `prompt = DEFAULT_PROMPT`: the prompting strategy; see `PromptTemplate`.
+- `interpret = nothing`: `interpret(program, example::IOExample)` returning the
+  program's output. HerbInterpret's generated interpreters have this method.
+  Exceptions count as a failed example.
+- `num_samples = 1`: independent samples (set a non-zero temperature).
+- `max_repairs = 0`: feedback rounds per sample.
+- `eq = (==)`: `eq(output, expected)` compares outputs.
 - `seed = nothing`: base seed; sample `i` uses `seed + i - 1`.
-- `verbose::Bool = false`: log each attempt with `@info`.
 
 # Returns
-`(program, log)` where `program` is a `RuleNode` or `nothing` (no answer could
-be parsed into the grammar) and `log` is an [`LLMSynthLog`](@ref).
+`(program, attempts)`: a `RuleNode` or `nothing`, and every [`Attempt`](@ref)
+made. Run with `JULIA_DEBUG=Garden` to log each attempt.
 """
 function llm_synth(
         grammar::AbstractGrammar,
@@ -115,133 +83,74 @@ function llm_synth(
         interpret = nothing,
         num_samples::Int = 1,
         max_repairs::Int = 0,
-        prompt_examples::Union{Nothing, Int} = nothing,
         eq = (==),
-        allow_errors::Bool = true,
-        seed::Union{Nothing, Int} = nothing,
-        verbose::Bool = false
+        seed::Union{Nothing, Int} = nothing
     )
     starting_sym in grammar.types ||
         throw(ArgumentError("starting symbol `$starting_sym` is not a nonterminal of the grammar"))
     num_samples >= 1 || throw(ArgumentError("num_samples must be at least 1"))
     max_repairs >= 0 || throw(ArgumentError("max_repairs must be non-negative"))
 
-    t0 = time()
-    all_examples = collect(problem.spec)
-    shown = isnothing(prompt_examples) ? all_examples :
-        all_examples[1:min(prompt_examples, length(all_examples))]
-    first_messages = initial_messages(prompt, grammar, starting_sym, shown)
-
+    examples = problem.spec
     attempts = Attempt[]
-    best = nothing
-    best_fitness = -1.0
-
     for sample in 1:num_samples
-        messages = copy(first_messages)
-        sample_seed = isnothing(seed) ? nothing : seed + sample - 1
-        for rnd in 0:max_repairs
-            attempt, feedback = _attempt(
-                model, messages, grammar, starting_sym, all_examples, shown;
-                sample, round = rnd, seed = sample_seed, interpret, eq, allow_errors
-            )
+        messages = initial_messages(prompt, grammar, starting_sym, examples)
+        for round in 0:max_repairs
+            t = time()
+            response = generate(model, messages; seed = isnothing(seed) ? nothing : seed + sample - 1)
+            attempt = _judge(response, time() - t, grammar, starting_sym, examples, interpret, eq;
+                sample, round)
             push!(attempts, attempt)
-            verbose && _log_attempt(attempt)
+            @debug "LLM attempt" sample round attempt.code attempt.error attempt.fitness
 
-            if !isnothing(attempt.program)
-                fit = ismissing(attempt.fitness) ? 1.0 : attempt.fitness
-                if fit > best_fitness
-                    best, best_fitness = attempt.program, fit
-                end
-                if fit == 1.0
-                    solved = !ismissing(attempt.fitness)
-                    return best, LLMSynthLog(first_messages, attempts, solved,
-                        attempt.fitness, time() - t0)
-                end
+            if !isnothing(attempt.program) && (isnothing(interpret) || attempt.fitness == 1)
+                return attempt.program, attempts
             end
-            (rnd == max_repairs || isnothing(feedback)) && break
-            push!(messages, ChatMessage("assistant", attempt.response))
-            push!(messages, ChatMessage("user",
-                feedback_message(prompt, grammar, starting_sym, feedback)))
+            push!(messages, ChatMessage("assistant", response),
+                ChatMessage("user", feedback_message(prompt, attempt)))
         end
     end
 
-    fitness = isnothing(best) ? missing : (isnothing(interpret) ? missing : best_fitness)
-    return best, LLMSynthLog(first_messages, attempts, false, fitness, time() - t0)
+    valid = filter(a -> !isnothing(a.program), attempts)
+    isempty(valid) && return nothing, attempts
+    return argmax(a -> a.fitness, valid).program, attempts
 end
 
-# One model call plus parsing and evaluation. Returns the attempt and the
-# feedback to give if the attempt is not a solution (or `nothing` if the model
-# call itself failed, in which case we do not continue the conversation).
-function _attempt(
-        model, messages, grammar, start, all_examples, shown;
-        sample, round, seed, interpret, eq, allow_errors
-    )
-    t = time()
-    response = try
-        generate(model, messages; seed = seed)
-    catch e
-        e isa InterruptException && rethrow()
-        @warn "Model call failed" exception = e
-        return Attempt(sample, round, "", "", nothing, e, missing, time() - t), nothing
-    end
-    dt = time() - t
-
-    code = ""
-    program = try
-        rn, code = text2rulenode(response, grammar, start)
-        rn
+# Parse a model answer and, with an interpreter, score it on the examples.
+function _judge(response, seconds, grammar, start, examples, interpret, eq; sample, round)
+    program, error = try
+        text2rulenode(response, grammar, start), nothing
     catch e
         e isa GrammarParseError || rethrow()
-        c = extract_code(response)
-        code = isnothing(c) ? "" : c
-        fb = Feedback(e.kind, code, e.message, Tuple{Any, Any}[], length(shown))
-        return Attempt(sample, round, response, code, nothing, e, missing, dt), fb
+        nothing, e.message
     end
+    fitness, failures = isnothing(program) || isnothing(interpret) ?
+        (missing, Tuple{IOExample, Any}[]) : evaluate(program, examples, interpret, eq)
+    code = something(extract_code(response), "")
+    return Attempt(sample, round, response, code, program, error, fitness, failures, seconds)
+end
 
-    isnothing(interpret) && return Attempt(sample, round, response, code, program, nothing, missing, dt), nothing
+"""
+    evaluate(program, examples, interpret, eq = (==)) -> (fitness, failures)
 
-    failures = Tuple{Any, Any}[]
-    solved = 0
-    for ex in all_examples
-        out = _run(interpret, program, ex, allow_errors)
-        ok = !(out isa _Failed) && _safe_eq(eq, out, ex.out)
-        solved += ok
-        if !ok && any(s -> s === ex, shown)
-            push!(failures, (ex, out isa _Failed ? out.err : out))
+Run `program` on every example. `fitness` is the fraction of examples whose output
+matches; `failures` holds `(example, output)` for the others, where `output` is
+the exception if the program threw one.
+"""
+function evaluate(program, examples, interpret, eq = (==))
+    failures = Tuple{IOExample, Any}[]
+    for ex in examples
+        output = try
+            interpret(program, ex)
+        catch e
+            e isa InterruptException && rethrow()
+            e
+        end
+        if output isa Exception || !eq(output, ex.out)
+            push!(failures, (ex, output))
         end
     end
-    fitness = solved / length(all_examples)
-    fb = Feedback(:wrong, code, "", failures, length(shown))
-    return Attempt(sample, round, response, code, program, nothing, fitness, dt), fb
-end
-
-struct _Failed
-    err::Exception
-end
-
-function _run(interpret, program, ex, allow_errors)
-    allow_errors || return interpret(program, ex)
-    try
-        return interpret(program, ex)
-    catch e
-        e isa InterruptException && rethrow()
-        return _Failed(e)
-    end
-end
-
-function _safe_eq(eq, a, b)
-    try
-        return eq(a, b) === true
-    catch
-        return false
-    end
-end
-
-function _log_attempt(a::Attempt)
-    status = !isnothing(a.error) ? "error: " * first(sprint(showerror, a.error), 200) :
-        ismissing(a.fitness) ? "valid program (not evaluated)" : "fitness $(a.fitness)"
-    secs = round(a.seconds; digits = 1)
-    @info "LLM attempt" sample = a.sample repair_round = a.round seconds = secs code = a.code status
+    return 1 - length(failures) / length(examples), failures
 end
 
 end # module LLMBaseline

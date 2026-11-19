@@ -1,16 +1,8 @@
 #=
-Language-model backends.
-
-Models are served by Ollama (`OllamaModel`). `FunctionModel` wraps a plain Julia
-function, which the tests use to script answers without a server. A backend is
-any subtype of `AbstractLanguageModel` that implements
+Language-model backends. A backend is a subtype of `AbstractLanguageModel` with
+one method:
 
     generate(model, messages::Vector{ChatMessage}; seed = nothing) -> String
-
-and returns the *visible* answer of the model (reasoning traces stripped).
-Everything else in the baseline (prompting, parsing, verification) is
-backend-agnostic, so adding a new backend is a matter of implementing that one
-method.
 =#
 
 """
@@ -32,46 +24,31 @@ abstract type AbstractLanguageModel end
 """
     generate(model::AbstractLanguageModel, messages::Vector{ChatMessage}; seed = nothing) -> String
 
-Send `messages` to `model` and return the text of its answer, with any
-reasoning trace removed. `seed` is forwarded to backends that support it, so
-repeated samples can be made reproducible.
+Send `messages` to `model` and return the text of its answer.
 """
 function generate end
 
-# ---------------------------------------------------------------------------
-# Ollama (native API)
-# ---------------------------------------------------------------------------
-
 """
-    OllamaModel(model::AbstractString; kwargs...)
+    OllamaModel(model::AbstractString; host, think, options, timeout)
 
-A model served by [Ollama](https://ollama.com) through its native `/api/chat`
-endpoint, which (unlike Ollama's OpenAI-compatible `/v1` endpoint) lets us set
-the context window, which matters for reasoning models whose traces easily exceed
-Ollama's small default.
+A model served by [Ollama](https://ollama.com), called through its native
+`/api/chat` endpoint.
 
-# Keyword arguments
-- `host = "http://localhost:11434"`: Ollama server.
-- `temperature = nothing`: sampling temperature (`nothing` = model default).
-- `num_ctx = 32768`: context window in tokens.
-- `num_predict = nothing`: maximum number of generated tokens.
-- `think = nothing`: reasoning control. `true`/`false` for hybrid models
-  (Qwen, Gemma), or `"low"`/`"medium"`/`"high"` for gpt-oss. `nothing` leaves the
-  model default.
-- `options = Dict{String,Any}()`: extra Ollama `options` (e.g. `"top_p"`).
+- `host = "http://localhost:11434"`: the Ollama server.
+- `think = nothing`: reasoning control: `true`/`false` for hybrid models (Qwen,
+  Gemma), `"low"`/`"medium"`/`"high"` for gpt-oss, `nothing` for the model default.
+- `options = Dict()`: Ollama options such as `"temperature"`, `"num_ctx"` or
+  `"num_predict"`. `"num_ctx"` defaults to 32768, because reasoning traces easily
+  exceed Ollama's own small default.
 - `timeout = 1800`: request timeout in seconds.
 
-# Example
 ```julia
-model = OllamaModel("gpt-oss:20b"; think = "medium", temperature = 0.6)
+OllamaModel("gpt-oss:20b"; think = "medium", options = Dict("temperature" => 0.6))
 ```
 """
 Base.@kwdef struct OllamaModel <: AbstractLanguageModel
     model::String
     host::String = "http://localhost:11434"
-    temperature::Union{Nothing, Float64} = nothing
-    num_ctx::Union{Nothing, Int} = 32768
-    num_predict::Union{Nothing, Int} = nothing
     think::Union{Nothing, Bool, String} = nothing
     options::Dict{String, Any} = Dict{String, Any}()
     timeout::Float64 = 1800.0
@@ -79,10 +56,7 @@ end
 OllamaModel(model::AbstractString; kwargs...) = OllamaModel(; model = String(model), kwargs...)
 
 function generate(m::OllamaModel, messages::Vector{ChatMessage}; seed = nothing)
-    options = Dict{String, Any}(m.options)
-    isnothing(m.temperature) || (options["temperature"] = m.temperature)
-    isnothing(m.num_ctx) || (options["num_ctx"] = m.num_ctx)
-    isnothing(m.num_predict) || (options["num_predict"] = m.num_predict)
+    options = merge(Dict{String, Any}("num_ctx" => 32768), m.options)
     isnothing(seed) || (options["seed"] = seed)
     body = Dict{String, Any}(
         "model" => m.model,
@@ -92,54 +66,20 @@ function generate(m::OllamaModel, messages::Vector{ChatMessage}; seed = nothing)
     )
     isnothing(m.think) || (body["think"] = m.think)
     response = _post_json(rstrip(m.host, '/') * "/api/chat", body; timeout = m.timeout)
-    content = response["message"]["content"]
-    return strip_reasoning(string(content))
+    return string(response["message"]["content"])
 end
-
-# ---------------------------------------------------------------------------
-# Plain Julia function
-# ---------------------------------------------------------------------------
 
 """
     FunctionModel(f)
 
-Wrap a Julia function `f(messages::Vector{ChatMessage}) -> String` as a
-language model. Useful for tests and for replaying cached answers.
-If `f` also accepts a `seed` keyword it is passed along.
+Wrap a function `f(messages::Vector{ChatMessage}) -> String` as a language
+model, e.g. to script answers in tests.
 """
 struct FunctionModel{F} <: AbstractLanguageModel
     f::F
 end
 
-function generate(m::FunctionModel, messages::Vector{ChatMessage}; seed = nothing)
-    out = applicable(m.f, messages) && !_accepts_seed(m.f) ? m.f(messages) :
-        m.f(messages; seed = seed)
-    return strip_reasoning(string(out))
-end
-
-function _accepts_seed(f)
-    return any(methods(f)) do meth
-        :seed in Base.kwarg_decl(meth)
-    end
-end
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-"""
-    strip_reasoning(text) -> String
-
-Remove `<think>…</think>` style reasoning blocks that some models inline into
-the answer.
-"""
-function strip_reasoning(text::AbstractString)
-    text = replace(text, r"<think>.*?</think>"s => "")
-    text = replace(text, r"<thinking>.*?</thinking>"s => "")
-    # An unterminated trace (the model ran out of tokens) carries no answer.
-    text = replace(text, r"<think>.*"s => "")
-    return String(strip(text))
-end
+generate(m::FunctionModel, messages::Vector{ChatMessage}; seed = nothing) = string(m.f(messages))
 
 function _post_json(url::AbstractString, body; timeout::Real)
     output = IOBuffer()
@@ -149,20 +89,18 @@ function _post_json(url::AbstractString, body; timeout::Real)
         timeout = timeout, throw = false
     )
     text = String(take!(output))
-    if response isa Downloads.RequestError
+    response isa Downloads.RequestError &&
         error("Request to $url failed: $(response.message). Is Ollama running?")
-    end
-    if !(200 <= response.status < 300)
+    200 <= response.status < 300 ||
         error("Request to $url returned HTTP $(response.status): $text")
-    end
     return JSON.parse(text)
 end
 
 """
 Open-weight models that fit a well-equipped laptop and are good candidates for
-this baseline, as of November 2026. Each entry gives the Ollama tag, the
-approximate memory needed at 4-bit quantisation and a short note. See the README for the
-reasoning behind the selection.
+this baseline, as of November 2026: the Ollama tag, the approximate memory needed
+at 4-bit quantisation and a short note. See the README for the reasoning behind
+the selection.
 """
 const RECOMMENDED_MODELS = [
     (name = "gpt-oss-20b", ollama = "gpt-oss:20b",

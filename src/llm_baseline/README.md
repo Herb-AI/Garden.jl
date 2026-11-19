@@ -85,12 +85,12 @@ import HerbBenchmarks.PBE_SLIA_Track_2019 as SLIA
 pair = get_problem_grammar_pair(SLIA, "17212077")   # "01/15/2013" -> "01/2013", ...
 interp = SLIA.make_SLIA_interpreter(pair.grammar)
 
-program, log = llm_synth(pair.grammar, :Start, pair.problem;
+program, attempts = llm_synth(pair.grammar, :Start, pair.problem;
     model = OllamaModel("gpt-oss:20b"; think = "medium"),
-    interpret = interp, verbose = true)
+    interpret = interp)
 
-println(log)        # LLMSynthLog(1 model calls, 1 valid programs, solved = true, ...)
 isnothing(program) || println(rulenode2expr(program, pair.grammar))
+attempts[end].fitness   # 1.0 when the program solves all examples
 ```
 
 The first run takes a minute or two to compile. After that, a problem takes from
@@ -111,10 +111,11 @@ import HerbBenchmarks.PBE_SLIA_Track_2019 as SLIA
 model = OllamaModel("gpt-oss:20b"; think = "medium")
 results = map(get_all_problem_grammar_pairs(SLIA)) do pair
     interp = SLIA.make_SLIA_interpreter(pair.grammar)
-    program, log = llm_synth(pair.grammar, :Start, pair.problem; model, interpret = interp)
-    (id = pair.identifier, solved = log.solved, fitness = log.best_fitness,
+    seconds = @elapsed program, attempts = llm_synth(pair.grammar, :Start, pair.problem;
+        model, interpret = interp)
+    (id = pair.identifier, solved = any(a -> a.fitness === 1.0, attempts),
      program = isnothing(program) ? nothing : rulenode2expr(program, pair.grammar),
-     seconds = log.seconds)
+     seconds)
 end
 count(r -> r.solved, results) / length(results)
 ```
@@ -168,13 +169,14 @@ Why these:
 
 Practical tips:
 
-* Reasoning traces are long. `OllamaModel` defaults to `num_ctx = 32768`, because
-  Ollama's own default context is much smaller and silently truncates. Raise
-  `num_predict` / `num_ctx` if answers get cut off: an attempt that ends in
-  `:no_program` usually means the model ran out of tokens while thinking.
+* Reasoning traces are long. `OllamaModel` sets the `"num_ctx"` option to 32768,
+  because Ollama's own default context is much smaller and silently truncates.
+  Raise `"num_ctx"` / `"num_predict"` if answers get cut off: an attempt whose
+  `error` is `no program found in the answer` usually means the model ran out of
+  tokens while thinking.
 * On Apple Silicon, the `-mlx` tags (e.g. `qwen3.8:27b-mlx`) are usually faster.
-* For `num_samples > 1`, set a non-zero `temperature` and a `seed`. Sample `i` uses
-  `seed + i - 1`.
+* For `num_samples > 1`, set a non-zero `"temperature"` and a `seed`. Sample `i`
+  uses `seed + i - 1`.
 
 ## Using another model
 
@@ -184,15 +186,15 @@ pass its tag.
 ```julia
 using Garden.LLMBaseline: OllamaModel, FunctionModel
 
-OllamaModel("qwen3.8:27b"; think = true, temperature = 0.6, num_ctx = 65536)
+OllamaModel("qwen3.8:27b"; think = true, options = Dict("temperature" => 0.6, "num_ctx" => 65536))
 OllamaModel("gpt-oss:20b"; think = "high", host = "http://other-machine:11434")
 
 # A function from chat messages to the answer text (e.g. scripted answers in tests).
 FunctionModel(messages -> "```julia\nx + 1\n```")
 ```
 
-`OllamaModel` keywords: `host`, `temperature`, `num_ctx`, `num_predict`, `think`,
-`options` (any other Ollama option) and `timeout`.
+`OllamaModel` keywords: `host`, `think`, `options` and `timeout`. `options` takes
+any Ollama option by its Ollama name, such as `"temperature"`, `"num_ctx"` or `"num_predict"`.
 
 Other model servers are not supported yet. A new backend is a subtype of
 `AbstractLanguageModel` with one method:
@@ -214,31 +216,32 @@ using Garden.LLMBaseline: PromptTemplate, DEFAULT_USER_PROMPT
 prompt = PromptTemplate(user = DEFAULT_USER_PROMPT *
     "\nFirst explain the transformation in one sentence, then give the program.")
 
-# No system message, your own layout, your own value printer
+# No system message and your own layout
 prompt = PromptTemplate(system = nothing,
-    user = "DSL:\n{{grammar}}\n\nI/O pairs:\n{{examples}}\n\nProgram:",
-    format_value = x -> sprint(print, x))
+    user = "DSL:\n{{grammar}}\n\nI/O pairs:\n{{examples}}\n\nProgram:")
 
 llm_synth(grammar, :Start, problem; model, prompt)
 ```
 
-Placeholders in `user`/`system`: `{{grammar}}`, `{{start}}`, `{{nonterminals}}`,
-`{{examples}}`, `{{num_examples}}`, `{{inputs}}`. Placeholders in the feedback
-templates (`syntax_feedback`, `grammar_feedback`, `wrong_feedback`):
-`{{program}}`, `{{message}}`, `{{failures}}`, `{{num_failed}}`, `{{num_examples}}`.
-You can also replace `format_grammar(grammar, start)` and `format_examples(examples)`.
+Placeholders in `user`/`system`: `{{grammar}}`, `{{start}}`, `{{examples}}`. The
+feedback templates are `parse_feedback` (for an answer that could not be parsed
+into the grammar, with `{{message}}`) and `wrong_feedback` (for a program that is
+wrong on some examples, with `{{failures}}`).
 
-To change the strategy itself (for example few-shot prompting or a two-stage
-prompt), subtype `AbstractPrompt` and implement
+To change anything else, such as how values are printed, few-shot prompting or a
+two-stage prompt, subtype `AbstractPrompt` and implement
 
 ```julia
 initial_messages(prompt, grammar, start::Symbol, examples) -> Vector{ChatMessage}
-feedback_message(prompt, grammar, start::Symbol, feedback::Feedback) -> String
+feedback_message(prompt, attempt::Attempt) -> String
 ```
+
+The helpers `format_grammar`, `format_examples`, `format_value` and `fill_template`
+are there to reuse.
 
 What the default prompt shows: the grammar as one line per nonterminal
 (`T = rhs₁ | rhs₂ | …`, with statement blocks written `(a; b)`), then the examples
-as `input: _arg_1 = …` / `output: …`. Note that the grammar's own function names
+as `input _arg_1: …` / `output: …`. Note that the grammar's own function names
 (e.g. `makeUppercase()`) carry meaning. That is part of the grammar, not
 information about the task.
 
@@ -251,29 +254,28 @@ information about the task.
 | `interpret` | `nothing` | `interpret(program, example)`; enables checking and ranking |
 | `num_samples` | `1` | independent samples |
 | `max_repairs` | `0` | feedback rounds per sample |
-| `prompt_examples` | `nothing` (all) | show only the first *k* examples in the prompt; candidates are still checked on all examples |
 | `eq` | `==` | output comparison |
-| `allow_errors` | `true` | interpreter exceptions count as failed examples |
 | `seed` | `nothing` | base sampling seed |
-| `verbose` | `false` | `@info` every attempt |
 
-Returns `(program, log)`: `program::Union{RuleNode, Nothing}`. The `log`
-(`LLMSynthLog`) holds the first prompt, every `Attempt` (raw answer, extracted
-code, parsed program, error, fitness, time), `solved`, `best_fitness` and the
-total time.
+Returns `(program, attempts)`: `program::Union{RuleNode, Nothing}` and one
+`Attempt` per model call, with the full answer, the extracted code, the parsed
+program or the reason it could not be parsed, its fitness and failing examples,
+and the time taken. Interpreter exceptions count as failed examples. If Ollama
+cannot be reached, `llm_synth` throws.
+
+To log every attempt, run with `JULIA_DEBUG=Garden`.
 
 ## How the answer is parsed
 
-* The program is taken from the last fenced code block of the answer (with
-  fallbacks to an inline `` `code` `` span or the last line), after removing
-  `<think>…</think>` traces.
+* The program is taken from the last fenced code block of the answer (also when
+  the closing fence is missing), or else from the last inline `` `code` `` span,
+  after removing `<think>…</think>` traces.
 * Harmless wrappers are removed: `function f(_arg_1) … end`, `f(_arg_1) = …`,
   `program = …` and `return …`. Assignments are kept if the grammar itself uses
   them, as in the ARC grammar.
 * Equivalent surface syntax is accepted: `if … else … end` for `c ? a : b`;
   statement sequences on separate lines (or `a; b; c`) for right-nested
-  `(Operation; Sequence)` productions; `f(a; b)` for `f((a; b))`; and `a + b + c`
-  for binary `Int + Int`.
+  `(Operation; Sequence)` productions; and `a + b + c` for binary `Int + Int`.
 * Numbers must equal a constant in the grammar (`0x01` and `1` are the same
   number). Strings must match exactly.
 
@@ -286,7 +288,7 @@ The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 |---|---|
 | `Request to … failed … Is Ollama running?` | Start the Ollama app (or `ollama serve`), or check `host`. |
 | `HTTP 404` mentioning the model | The model isn't pulled (`ollama pull <tag>`), or the tag is misspelled; `ollama list` shows what you have. |
-| Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `num_ctx` (e.g. `65536`) and/or `num_predict` on `OllamaModel`, or lower `think`. |
+| Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `"num_ctx"` (e.g. `65536`) and/or `"num_predict"` in `OllamaModel`'s `options`, or lower `think`. |
 | Every attempt has fitness 0 on `Robots_2020` | Its inputs are stored under `:_arg_1_`; use `interpret = (p, ex) -> Robots_2020.interpret(p, ex.in[:_arg_1_])`. |
 | Very slow | Use a mixture-of-experts model (`gpt-oss:20b`, `gemma4:26b`), the `-mlx` builds on Apple Silicon, or `think = "low"`. |
 

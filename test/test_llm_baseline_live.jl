@@ -31,7 +31,7 @@ else
     live_model_tag = get(ENV, "GARDEN_LLM_MODEL", "qwen3.5:4b")
     live_host = get(ENV, "GARDEN_LLM_HOST", "http://localhost:11434")
     live_model = LiveLLM.OllamaModel(live_model_tag;
-        host = live_host, temperature = 0.7, num_ctx = 16384, timeout = 600)
+        host = live_host, options = Dict("temperature" => 0.7, "num_ctx" => 16384), timeout = 600)
 
     @testset verbose = true "LLMBaseline live ($live_model_tag)" begin
         @testset "model answers" begin
@@ -53,25 +53,25 @@ else
 
         @testset "solves x + 1" begin
             problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), x + 1) for x in 1:5])
-            program, log = LiveLLM.llm_synth(arith, :Start, problem;
+            program, attempts = LiveLLM.llm_synth(arith, :Start, problem;
                 model = live_model, interpret = arith_interp,
                 num_samples = 3, max_repairs = 2, seed = 1)
-            @info "x + 1" log program = isnothing(program) ? nothing : rulenode2expr(program, arith)
-            @test any(a -> !isnothing(a.program), log.attempts)   # real answers parse
-            @test log.solved
+            @info "x + 1" attempts program = isnothing(program) ? nothing : rulenode2expr(program, arith)
+            @test any(a -> !isnothing(a.program), attempts)   # real answers parse
+            @test any(a -> a.fitness === 1.0, attempts)
             @test program isa RuleNode
             @test all(arith_interp(program, ex) == ex.out for ex in problem.spec)
         end
 
         @testset "harder task returns a valid program or nothing" begin
             problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2x * x + 1) for x in 1:5])
-            program, log = LiveLLM.llm_synth(arith, :Start, problem;
+            program, attempts = LiveLLM.llm_synth(arith, :Start, problem;
                 model = live_model, interpret = arith_interp, max_repairs = 1, seed = 2)
-            @info "2x^2 + 1" log program = isnothing(program) ? nothing : rulenode2expr(program, arith)
-            @test length(log.attempts) >= 1
+            @info "2x^2 + 1" attempts program = isnothing(program) ? nothing : rulenode2expr(program, arith)
+            @test length(attempts) >= 1
             if !isnothing(program)
                 @test rulenode2expr(program, arith) isa Union{Expr, Symbol, Int}
-                @test 0.0 <= log.best_fitness <= 1.0
+                @test 0.0 <= maximum(a -> coalesce(a.fitness, 0.0), attempts) <= 1.0
             end
         end
 
@@ -84,10 +84,10 @@ else
                 Operation = inc() | dbl()
             end
             problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2(x + 1)) for x in 1:3])
-            program, log = LiveLLM.llm_synth(seq, :Start, problem;
+            program, attempts = LiveLLM.llm_synth(seq, :Start, problem;
                 model = live_model, num_samples = 2, max_repairs = 2, seed = 3)
-            @info "sequence DSL" log program = isnothing(program) ? nothing : rulenode2expr(program, seq)
-            @test any(a -> !isnothing(a.program), log.attempts)
+            @info "sequence DSL" attempts program = isnothing(program) ? nothing : rulenode2expr(program, seq)
+            @test any(a -> !isnothing(a.program), attempts)
             @test program isa RuleNode
         end
     end
