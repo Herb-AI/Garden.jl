@@ -127,12 +127,15 @@ Interpreters for the other benchmarks:
 | `PBE_SLIA_Track_2019` | `SLIA.make_SLIA_interpreter(pair.grammar)` |
 | `DeepCoder_2016` | `DeepCoder_2016.make_deepcoder_interpreter(pair.grammar)` |
 | `PBE_BV_Track_2018` | `PBE_BV_Track_2018.make_bv_interpreter(pair.grammar)` |
-| `String_transformations_2020`, `Pixels_2020` | the module's `interpret` (stateful) |
-| `Robots_2020` | `(p, ex) -> Robots_2020.interpret(p, ex.in[:_arg_1_])` (its inputs are stored under `:_arg_1_`, not `:_arg_1`) |
+| `String_transformations_2020` | `(p, input) -> String_transformations_2020.interpret(p, input[:_arg_1])` |
+| `Pixels_2020` | `(p, input) -> Pixels_2020.interpret(p, input[:_arg_1])` |
+| `Robots_2020` | `(p, input) -> Robots_2020.interpret(p, input[:_arg_1_])` (its inputs are stored under `:_arg_1_`, not `:_arg_1`) |
 
-The interpreter is called as `interpret(program, example::IOExample)`. That is
-the method the generated HerbInterpret interpreters provide, for both the
-plain and the stateful kind. Pass `eq` if outputs need a custom comparison.
+The interpreter is called as `interpret(program, example.in)`, with the example's
+input `Dict`: the same convention as Probe. Interpreters made by HerbInterpret's
+`make_interpreter` take that directly. The stateful interpreters of the string,
+pixel and robot benchmarks take the state itself, hence the one-line wrappers.
+Pass `eq` if outputs need a custom comparison.
 
 ## Which model?
 
@@ -237,7 +240,9 @@ feedback_message(prompt, attempt::Attempt) -> String
 ```
 
 The helpers `format_grammar`, `format_examples`, `format_value` and `fill_template`
-are there to reuse.
+are there to reuse, and an `Attempt` carries everything about the failed answer
+(its `error`, or its `failures` with the program's outputs). The `TersePrompt` in
+`test/test_llm_baseline.jl` is a complete example in eight lines.
 
 What the default prompt shows: the grammar as one line per nonterminal
 (`T = rhs₁ | rhs₂ | …`, with statement blocks written `(a; b)`), then the examples
@@ -251,7 +256,7 @@ information about the task.
 |---|---|---|
 | `model` | `OllamaModel("gpt-oss:20b")` | the language model |
 | `prompt` | `DEFAULT_PROMPT` | prompting strategy |
-| `interpret` | `nothing` | `interpret(program, example)`; enables checking and ranking |
+| `interpret` | `nothing` | `interpret(program, example.in)`, as in Probe; enables checking and ranking |
 | `num_samples` | `1` | independent samples |
 | `max_repairs` | `0` | feedback rounds per sample |
 | `eq` | `==` | output comparison |
@@ -289,7 +294,7 @@ The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 | `Request to … failed … Is Ollama running?` | Start the Ollama app (or `ollama serve`), or check `host`. |
 | `HTTP 404` mentioning the model | The model isn't pulled (`ollama pull <tag>`), or the tag is misspelled; `ollama list` shows what you have. |
 | Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `"num_ctx"` (e.g. `65536`) and/or `"num_predict"` in `OllamaModel`'s `options`, or lower `think`. |
-| Every attempt has fitness 0 on `Robots_2020` | Its inputs are stored under `:_arg_1_`; use `interpret = (p, ex) -> Robots_2020.interpret(p, ex.in[:_arg_1_])`. |
+| Every attempt has fitness 0, and `attempts[1].failures` shows a `KeyError` or `MethodError` | The interpreter does not take the input `Dict`: wrap it, e.g. `(p, input) -> Robots_2020.interpret(p, input[:_arg_1_])` (see the interpreter table above). |
 | Very slow | Use a mixture-of-experts model (`gpt-oss:20b`, `gemma4:26b`), the `-mlx` builds on Apple Silicon, or `think = "low"`. |
 
 ## Tests
@@ -308,8 +313,8 @@ check compiles a lot.
 
 `test/test_llm_baseline_live.jl` runs the baseline against a real model through
 Ollama: a plain model call, an easy task the model is expected to solve (`x + 1`),
-a harder task where only a valid program (or `nothing`) is required, a
-and a statement-sequence DSL. These tests are
+a harder task where only a valid program (or `nothing`) is required, and a
+statement-sequence DSL. These tests are
 **disabled by default**; when disabled they are skipped with a log message. Enable
 them with an environment variable:
 
@@ -327,3 +332,20 @@ GARDEN_LLM_TESTS=true julia --project -e 'using Pkg; Pkg.test()'
 Model answers vary from run to run, so a failure of the "solves `x + 1`" test with a
 small model can be bad luck rather than a bug. Look at the logged attempts before
 investigating.
+
+### Benchmark tests
+
+`test/test_llm_baseline_benchmarks.jl` checks the baseline against every benchmark
+in HerbBenchmarks.jl, without a model: random programs from each grammar must print
+and parse back to themselves, no prompt or feedback message may contain a module
+name or problem name, and each benchmark's interpreter must work with the
+`interpret(program, input)` convention. Run it after changing the parser, the
+prompt formatting or the interpreter table above.
+
+HerbBenchmarks is not a registered package, so these tests run from the
+environment of the installation section rather than through `Pkg.test()`. They are
+disabled by default:
+
+```sh
+GARDEN_BENCHMARK_TESTS=true julia --project=llm-experiments Garden.jl/test/test_llm_baseline_benchmarks.jl
+```

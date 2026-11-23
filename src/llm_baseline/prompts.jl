@@ -1,18 +1,12 @@
 #=
-Prompt construction. The default prompt is purely inductive: the model only sees
-the grammar, its start symbol and the input/output examples. `initial_messages`
-is never given the `Problem`, so its name cannot reach the prompt.
+Prompt construction: `PromptTemplate`, the default `AbstractPrompt`, and the
+formatting helpers a custom prompt can reuse.
+
+The default prompt is purely inductive: the model only sees the grammar, its
+start symbol and the input/output examples. Two things guarantee it:
+`initial_messages` is never given the `Problem`, and `format_value` removes the
+module names of the values' types, which could reveal the benchmark.
 =#
-
-"""
-Abstract supertype of prompting strategies. A subtype implements
-
-    initial_messages(prompt, grammar, start::Symbol, examples) -> Vector{ChatMessage}
-    feedback_message(prompt, attempt::Attempt) -> String
-
-`feedback_message` is only called when `max_repairs > 0` in [`llm_synth`](@ref).
-"""
-abstract type AbstractPrompt end
 
 const DEFAULT_SYSTEM_PROMPT = """
 You are an expert program synthesizer. You are given the grammar of a \
@@ -117,47 +111,56 @@ One line per nonterminal, `T = rhs₁ | rhs₂ | …`, starting with `start`.
 Duplicate productions are shown once.
 """
 function format_grammar(grammar::AbstractGrammar, start::Symbol)
-    nonterminals = unique(vcat(start, grammar.types))
-    lines = map(nonterminals) do nt
-        rhss = unique(rule_string(grammar.rules[r]) for r in grammar.bytype[nt])
+    lines = map(unique(vcat(start, _nonterminals_in_order(grammar)))) do nt
+        rhss = unique(rule_string(_rules(grammar)[r]) for r in _productions(grammar, nt))
         string(nt, " = ", join(rhss, " | "))
     end
     return join(lines, "\n")
 end
 
 """
-    rule_string(rule) -> String
-
-One-line rendering of a production's right-hand side, with blocks written
-`(a; b)` and conditionals `(c ? a : b)`.
-"""
-rule_string(rule) = _rs(normalize_expr(rule))
-
-function _rs(e)
-    e isa Symbol && return string(e)
-    e isa Expr || return repr(e)
-    if e.head == :block
-        return "(" * join(_rs.(e.args), "; ") * ")"
-    elseif e.head == :if && length(e.args) == 3
-        return "(" * _rs(e.args[1]) * " ? " * _rs(e.args[2]) * " : " * _rs(e.args[3]) * ")"
-    elseif e.head == :call && any(a -> a isa Expr && a.head in (:block, :if), e.args[2:end])
-        # A call whose arguments need the one-line forms above.
-        f = e.args[1]
-        if f isa Symbol && Base.isbinaryoperator(f) && length(e.args) == 3
-            return _rs(e.args[2]) * " $f " * _rs(e.args[3])
-        end
-        return string(f) * "(" * join(_rs.(e.args[2:end]), ", ") * ")"
-    end
-    return string(e)
-end
-
-"""
     format_value(x) -> String
 
-Print a value without the name of the module that defines its type, which could
-reveal the benchmark.
+Print a value without the names of the modules that define the types in it
+(`HerbBenchmarks.String_transformations_2020.StringState("a", 1)` becomes
+`StringState("a", 1)`), because a module name could reveal the benchmark. This
+also covers types nested inside containers and struct fields.
 """
-format_value(x) = sprint(show, x; context = :module => parentmodule(typeof(x)))
+format_value(x) = _strip_module_names(sprint(show, x), _modules_in(x))
+
+# Remove every suffix of each module's path, longest first, so that both
+# `A.B.T` and `B.T` become `T` (Julia prints whichever is visible from `Main`).
+function _strip_module_names(text::AbstractString, modules)
+    for m in modules, i in eachindex(fullname(m))
+        text = replace(text, join(fullname(m)[i:end], ".") * "." => "")
+    end
+    return text
+end
+
+# The modules of all non-Base types in `x`: its type and type parameters, and
+# those of its elements and fields.
+function _modules_in(x, found = Set{Module}())
+    _type_modules!(found, typeof(x))
+    if x isa Union{AbstractArray, Tuple, NamedTuple, AbstractSet}
+        foreach(v -> _modules_in(v, found), x)
+    elseif x isa AbstractDict
+        foreach(kv -> (_modules_in(first(kv), found); _modules_in(last(kv), found)), x)
+    elseif !_is_base(parentmodule(typeof(x)))
+        for f in fieldnames(typeof(x))
+            isdefined(x, f) && _modules_in(getfield(x, f), found)
+        end
+    end
+    return found
+end
+
+function _type_modules!(found, T)
+    T isa DataType || return found
+    _is_base(parentmodule(T)) || push!(found, parentmodule(T))
+    foreach(p -> _type_modules!(found, p), T.parameters)
+    return found
+end
+
+_is_base(m::Module) = Base.moduleroot(m) in (Base, Core)
 
 """
     format_examples(examples) -> String
@@ -179,7 +182,7 @@ function format_failures(failures)
         lines = [[_labelled("input $k", v) for (k, v) in _inputs(ex)];
                  _labelled("expected output", ex.out);
                  actual isa Exception ?
-                     "your program raised: " * first(sprint(showerror, actual), 300) :
+                     "your program raised: " * _error_line(actual) :
                      _labelled("your output", actual)]
         "- " * join(lines, "\n  ")
     end
@@ -187,6 +190,10 @@ function format_failures(failures)
 end
 
 _inputs(ex) = sort!(collect(ex.in); by = string ∘ first)
+
+# First line of an error message, without module names. Later lines (such as
+# MethodError's "Closest candidates", with file paths) could reveal the benchmark.
+_error_line(e) = _strip_module_names(first(split(sprint(showerror, e), '\n')), _modules_in(e))
 
 # `label: value`, with a value that spans several lines (e.g. a grid) indented below the label.
 function _labelled(label, value)

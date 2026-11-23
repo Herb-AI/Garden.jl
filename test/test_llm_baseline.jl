@@ -5,8 +5,9 @@ RuntimeGeneratedFunctions.init(@__MODULE__)
 
 import Garden.LLMBaseline as LLM
 import Garden.LLMBaseline: llm_synth, FunctionModel, ChatMessage, PromptTemplate,
-    GrammarParseError, text2rulenode, extract_code, format_grammar, format_value,
-    initial_messages, DEFAULT_PROMPT
+    AbstractPrompt, Attempt, GrammarParseError, text2rulenode, extract_code,
+    format_grammar, format_examples, format_value, initial_messages, feedback_message,
+    DEFAULT_PROMPT
 import Herb: HerbCore, @csgrammar, BFSIterator, IOExample, Problem, RuleNode, freeze_state,
     make_interpreter, rulenode2expr
 
@@ -17,7 +18,19 @@ struct Counter
 end
 inc(c::Counter) = Counter(c.n + 1)
 dbl(c::Counter) = Counter(2c.n)
+struct Pair2
+    a::Counter
+    b::Counter
 end
+end
+
+# The smallest custom prompting strategy: one user message, terse feedback.
+struct TersePrompt <: AbstractPrompt end
+function LLM.initial_messages(::TersePrompt, grammar, start, examples)
+    return [ChatMessage("user", format_grammar(grammar, start) * "\n" * format_examples(examples))]
+end
+LLM.feedback_message(::TersePrompt, a::Attempt) =
+    isnothing(a.program) ? "Parse error: $(a.error)" : "Wrong on $(length(a.failures)) examples."
 
 # Answers scripted replies in order and records every conversation it sees.
 function scripted(replies)
@@ -104,6 +117,11 @@ end
     end
 
     @testset "round trip on all small programs" begin
+        # A conditional inside a sum forces the one-line printer; nesting must survive.
+        e = :((x == 1 ? 1 : 2) + (x + 1))
+        rn = text2rulenode("`" * LLM.rule_string(e) * "`", arith, :Start)
+        @test LLM.normalize_expr(rulenode2expr(rn, arith)) == LLM.normalize_expr(e)
+
         for g in (arith, seq), p in Iterators.take(BFSIterator(g, :Start; max_depth = 4), 300)
             e = rulenode2expr(freeze_state(p), g)
             rn2 = text2rulenode("```julia\n" * LLM.rule_string(e) * "\n```", g, :Start)
@@ -122,6 +140,21 @@ end
         @test occursin("Sequence = Operation | (Operation; Sequence)", text)
         @test format_value(SeqDSL.Counter(3)) == "Counter(3)"
         @test format_value("call os.path(x)") == "\"call os.path(x)\""   # strings untouched
+        # Module names are removed from nested types too.
+        c = SeqDSL.Counter(1)
+        for v in ([c, c], (c, 1), Dict(:k => c), SeqDSL.Pair2(c, c), Any[c])
+            @test !occursin("SeqDSL", format_value(v))
+        end
+        # ... and from error messages shown as feedback.
+        err = try
+            SeqDSL.inc(1)
+        catch e
+            e
+        end
+        failure = (IOExample(Dict{Symbol, Any}(:x => 1), 2), err)
+        attempt = Attempt(1, 0, "", "", RuleNode(1), nothing, 0.0, [failure], 0.0)
+        msg = feedback_message(DEFAULT_PROMPT, attempt)
+        @test occursin("your program raised: MethodError", msg) && !occursin("SeqDSL", msg)
         @test startswith(format_grammar(arith, :Start), "Start = Int\n")
     end
 
@@ -134,7 +167,7 @@ end
         model, _ = scripted(["```julia\nx + x + 1\n```"])
         prog, attempts = llm_synth(arith, :Start, problem; model, interpret = interp)
         @test prog isa RuleNode
-        @test all(interp(prog, ex) == ex.out for ex in problem.spec)
+        @test all(interp(prog, ex.in) == ex.out for ex in problem.spec)
         @test length(attempts) == 1 && attempts[1].fitness == 1.0
 
         # Repairs: grammar error, then wrong program, then correct.
@@ -173,6 +206,19 @@ end
         @test occursin("Example 4:\n  input x: 4\n  output: 9", seen[1][1].content)
 
         @test_throws ArgumentError llm_synth(arith, :Nope, problem; model)
+    end
+
+    @testset "custom prompt type" begin
+        problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2x + 1) for x in 1:4])
+        interp = make_interpreter(arith; input_symbols = [:x],
+            target_module = @__MODULE__, cache_module = @__MODULE__)
+        model, seen = scripted(["`x + 3`", "`x + 1`", "`x + x + 1`"])
+        prog, attempts = llm_synth(arith, :Start, problem; model, prompt = TersePrompt(),
+            interpret = interp, max_repairs = 2)
+        @test rulenode2expr(prog, arith) == :((x + x) + 1)
+        @test length(seen[1]) == 1 && startswith(seen[1][1].content, "Start = Int")
+        @test startswith(seen[2][end].content, "Parse error: `3` cannot be derived")
+        @test seen[3][end].content == "Wrong on 4 examples."
     end
 
     @testset "Ollama backend" begin

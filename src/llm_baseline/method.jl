@@ -3,41 +3,14 @@ module LLMBaseline
 import Downloads
 import JSON
 import DocStringExtensions: TYPEDSIGNATURES
-import Herb: AbstractGrammar, AbstractRuleNode, RuleNode, Problem, IOExample
+import Herb: AbstractGrammar, AbstractRuleNode, RuleNode, Problem, IOExample, nonterminals
 
-include("backends.jl")
-include("parsing.jl")
-
-"""
-    Attempt
-
-One model call made by [`llm_synth`](@ref).
-
-- `sample`, `round`: which independent sample, and which repair round within it
-  (0 = the first answer).
-- `response`: the model's full answer.
-- `code`: the program text extracted from it (`""` if none).
-- `program`: the parsed `RuleNode`, or `nothing` if the answer could not be parsed.
-- `error`: why the answer could not be parsed, or `nothing`.
-- `fitness`: fraction of examples solved; `missing` without an interpreter or
-  program.
-- `failures`: `(example, output)` for each failed example, where `output` is the
-  program's output or the exception it threw.
-- `seconds`: time taken by the model call.
-"""
-struct Attempt
-    sample::Int
-    round::Int
-    response::String
-    code::String
-    program::Union{Nothing, RuleNode}
-    error::Union{Nothing, String}
-    fitness::Union{Missing, Float64}
-    failures::Vector{Tuple{IOExample, Any}}
-    seconds::Float64
-end
-
-include("prompts.jl")
+# Each file depends only on the files included before it.
+include("types.jl")     # shared types and interfaces
+include("syntax.jl")    # expression helpers and grammar access
+include("backends.jl")  # language models
+include("prompts.jl")   # what the model sees
+include("parsing.jl")   # from the model's answer to a RuleNode
 
 """
     $(TYPEDSIGNATURES)
@@ -62,8 +35,8 @@ first answer that parses into the grammar is returned, unchecked.
 - `model = OllamaModel(DEFAULT_OLLAMA_MODEL)`: the language model; see
   `OllamaModel` and `RECOMMENDED_MODELS`.
 - `prompt = DEFAULT_PROMPT`: the prompting strategy; see `PromptTemplate`.
-- `interpret = nothing`: `interpret(program, example::IOExample)` returning the
-  program's output. HerbInterpret's generated interpreters have this method.
+- `interpret = nothing`: `interpret(program, input)` returning the program's
+  output for an example's input `Dict`, the same convention as Probe.
   Exceptions count as a failed example.
 - `num_samples = 1`: independent samples (set a non-zero temperature).
 - `max_repairs = 0`: feedback rounds per sample.
@@ -77,7 +50,7 @@ made. Run with `JULIA_DEBUG=Garden` to log each attempt.
 function llm_synth(
         grammar::AbstractGrammar,
         starting_sym::Symbol,
-        problem::Problem;
+        problem::Problem{<:AbstractVector{<:IOExample}};
         model::AbstractLanguageModel = OllamaModel(DEFAULT_OLLAMA_MODEL),
         prompt::AbstractPrompt = DEFAULT_PROMPT,
         interpret = nothing,
@@ -86,62 +59,86 @@ function llm_synth(
         eq = (==),
         seed::Union{Nothing, Int} = nothing
     )
-    starting_sym in grammar.types ||
+    starting_sym in nonterminals(grammar) ||
         throw(ArgumentError("starting symbol `$starting_sym` is not a nonterminal of the grammar"))
     num_samples >= 1 || throw(ArgumentError("num_samples must be at least 1"))
     max_repairs >= 0 || throw(ArgumentError("max_repairs must be non-negative"))
 
-    examples = problem.spec
+    setup = _Setup(grammar, starting_sym, problem.spec, interpret, eq)
     attempts = Attempt[]
     for sample in 1:num_samples
-        messages = initial_messages(prompt, grammar, starting_sym, examples)
-        for round in 0:max_repairs
-            t = time()
-            response = generate(model, messages; seed = isnothing(seed) ? nothing : seed + sample - 1)
-            attempt = _judge(response, time() - t, grammar, starting_sym, examples, interpret, eq;
-                sample, round)
-            push!(attempts, attempt)
-            @debug "LLM attempt" sample round attempt.code attempt.error attempt.fitness
-
-            if !isnothing(attempt.program) && (isnothing(interpret) || attempt.fitness == 1)
-                return attempt.program, attempts
-            end
-            push!(messages, ChatMessage("assistant", response),
-                ChatMessage("user", feedback_message(prompt, attempt)))
-        end
+        sample_seed = isnothing(seed) ? nothing : seed + sample - 1
+        solution = _run_sample!(attempts, setup, model, prompt, sample, max_repairs, sample_seed)
+        isnothing(solution) || return solution, attempts
     end
+    return _best_program(attempts), attempts
+end
 
+# What stays fixed during one call of `llm_synth`.
+struct _Setup{G <: AbstractGrammar, E <: AbstractVector{<:IOExample}, I, Q}
+    grammar::G
+    start::Symbol
+    examples::E
+    interpret::I  # `nothing` or `interpret(program, input)`
+    eq::Q
+end
+
+# One conversation: ask, judge and give feedback, up to `max_repairs` times.
+# Appends every attempt to `attempts`; returns the solution, or `nothing`.
+function _run_sample!(attempts, setup::_Setup, model, prompt, sample, max_repairs, seed)
+    messages = initial_messages(prompt, setup.grammar, setup.start, setup.examples)
+    for repair in 0:max_repairs
+        t = time()
+        response = generate(model, messages; seed)
+        attempt = _judge(setup, response, time() - t; sample, repair)
+        push!(attempts, attempt)
+        @debug "LLM attempt" sample repair attempt.code attempt.error attempt.fitness
+
+        _is_solution(attempt, setup) && return attempt.program
+        push!(messages, ChatMessage("assistant", response),
+            ChatMessage("user", feedback_message(prompt, attempt)))
+    end
+    return nothing
+end
+
+# Good enough to stop: a valid program that solves every example, or, without an
+# interpreter to check it, any valid program.
+_is_solution(a::Attempt, setup::_Setup) =
+    !isnothing(a.program) && (isnothing(setup.interpret) || a.fitness == 1)
+
+# The valid program with the highest fitness, or `nothing` if no answer parsed.
+function _best_program(attempts)
     valid = filter(a -> !isnothing(a.program), attempts)
-    isempty(valid) && return nothing, attempts
-    return argmax(a -> a.fitness, valid).program, attempts
+    return isempty(valid) ? nothing : argmax(a -> a.fitness, valid).program
 end
 
 # Parse a model answer and, with an interpreter, score it on the examples.
-function _judge(response, seconds, grammar, start, examples, interpret, eq; sample, round)
+function _judge(setup::_Setup, response, seconds; sample, repair)
     program, error = try
-        text2rulenode(response, grammar, start), nothing
+        text2rulenode(response, setup.grammar, setup.start), nothing
     catch e
         e isa GrammarParseError || rethrow()
         nothing, e.message
     end
-    fitness, failures = isnothing(program) || isnothing(interpret) ?
-        (missing, Tuple{IOExample, Any}[]) : evaluate(program, examples, interpret, eq)
+    fitness, failures = isnothing(program) || isnothing(setup.interpret) ?
+        (missing, Tuple{IOExample, Any}[]) :
+        evaluate(program, setup.examples, setup.interpret, setup.eq)
     code = something(extract_code(response), "")
-    return Attempt(sample, round, response, code, program, error, fitness, failures, seconds)
+    return Attempt(sample, repair, response, code, program, error, fitness, failures, seconds)
 end
 
 """
     evaluate(program, examples, interpret, eq = (==)) -> (fitness, failures)
 
-Run `program` on every example. `fitness` is the fraction of examples whose output
-matches; `failures` holds `(example, output)` for the others, where `output` is
-the exception if the program threw one.
+Run `interpret(program, example.in)` on every example. `fitness` is the fraction
+of examples whose output matches; `failures` holds `(example, output)` for the
+others, where `output` is the exception if the program threw one.
 """
 function evaluate(program, examples, interpret, eq = (==))
     failures = Tuple{IOExample, Any}[]
     for ex in examples
         output = try
-            interpret(program, ex)
+            interpret(program, ex.in)
         catch e
             e isa InterruptException && rethrow()
             e

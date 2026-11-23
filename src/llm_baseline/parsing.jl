@@ -8,16 +8,6 @@ From model text to a `RuleNode`:
 =#
 
 """
-    GrammarParseError(message)
-
-Thrown when a model answer cannot be turned into a program of the grammar.
-"""
-struct GrammarParseError <: Exception
-    message::String
-end
-Base.showerror(io::IO, e::GrammarParseError) = print(io, e.message)
-
-"""
     text2rulenode(text, grammar, start::Symbol) -> RuleNode
 
 Turn a model answer into a derivation of `start` in `grammar`. Throws a
@@ -63,7 +53,7 @@ function parse_program(code::AbstractString, grammar::AbstractGrammar)
     end
     isempty(stmts) && throw(GrammarParseError("the code block is empty"))
     e = normalize_expr(length(stmts) == 1 ? only(stmts) : Expr(:block, stmts...))
-    return _unwrap(e, any(r -> _contains_head(r, :(=)), grammar.rules))
+    return _unwrap(e, any(r -> _contains_head(r, :(=)), _rules(grammar)))
 end
 
 function _unwrap(e, keep_assignments::Bool)
@@ -75,21 +65,6 @@ function _unwrap(e, keep_assignments::Bool)
 end
 
 _contains_head(e, head) = e isa Expr && (e.head == head || any(a -> _contains_head(a, head), e.args))
-
-"""
-    normalize_expr(e)
-
-Canonical form used on both sides of the matching: no line numbers, no
-single-statement blocks, `elseif` written as `if`, and `a; b` on one line (which
-Julia parses as `:toplevel`) written as a block.
-"""
-function normalize_expr(e)
-    e isa Expr || return e
-    args = Any[normalize_expr(a) for a in e.args if !(a isa LineNumberNode)]
-    head = e.head == :elseif ? :if : e.head == :toplevel ? :block : e.head
-    head == :block && length(args) == 1 && return only(args)
-    return Expr(head, args...)
-end
 
 # ---------------------------------------------------------------------------
 # Typed derivation
@@ -104,8 +79,8 @@ struct _Matcher{G <: AbstractGrammar}
 end
 
 function _Matcher(grammar::AbstractGrammar)
-    return _Matcher(grammar, Any[normalize_expr(r) for r in grammar.rules],
-        Set{Symbol}(grammar.types), Set{Tuple{Any, Symbol}}(), Tuple{Any, Symbol}[])
+    return _Matcher(grammar, Any[normalize_expr(r) for r in _rules(grammar)],
+        Set{Symbol}(nonterminals(grammar)), Set{Tuple{Any, Symbol}}(), Tuple{Any, Symbol}[])
 end
 
 """
@@ -124,12 +99,19 @@ function expr2rulenode_typed(expr, grammar::AbstractGrammar, type::Symbol)
 end
 
 # Derive `ex` from nonterminal `type`, or return `nothing`.
+#
+# There is no memoisation: a sub-expression is derived again for every production
+# that reaches it. That is fast because model answers are small and productions of
+# one nonterminal rarely share a top-level form, so most fail at their first
+# symbol. A grammar with long chains of unit productions (`A = B`, `B = C`, …) or
+# many productions of the same shape could make this exponential; if parsing ever
+# gets slow, memoise `_derive` on `(ex, type)` first.
 function _derive(m::_Matcher, ex, type::Symbol)
     key = (ex, type)
     key in m.active && return nothing  # cyclic unit productions such as `A = B`, `B = A`
     push!(m.active, key)
     result = nothing
-    for r in m.grammar.bytype[type]
+    for r in _productions(m.grammar, type)
         children = AbstractRuleNode[]
         if _unify!(m, m.patterns[r], ex, children)
             result = RuleNode(r, children)
@@ -137,7 +119,7 @@ function _derive(m::_Matcher, ex, type::Symbol)
         end
     end
     delete!(m.active, key)
-    if isnothing(result) && !any(r -> _same_shape(m, m.patterns[r], ex), m.grammar.bytype[type])
+    if isnothing(result) && !any(r -> _same_shape(m, m.patterns[r], ex), _productions(m.grammar, type))
         push!(m.failures, key)
     end
     return result
@@ -194,7 +176,7 @@ end
 function _explain_failure(m::_Matcher, expr, type::Symbol)
     isempty(m.failures) && return "`$(_show_expr(expr))` cannot be derived from `$type`."
     ex, t = argmin(f -> length(_show_expr(f[1])), m.failures)
-    prods = join(unique(rule_string(m.grammar.rules[r]) for r in m.grammar.bytype[t]), " | ")
+    prods = join(unique(rule_string(_rules(m.grammar)[r]) for r in _productions(m.grammar, t)), " | ")
     return "`$(_show_expr(ex))` cannot be derived from nonterminal `$t` " *
         "(its productions are: $t = $prods)."
 end

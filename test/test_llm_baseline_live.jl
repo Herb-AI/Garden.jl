@@ -60,7 +60,7 @@ else
             @test any(a -> !isnothing(a.program), attempts)   # real answers parse
             @test any(a -> a.fitness === 1.0, attempts)
             @test program isa RuleNode
-            @test all(arith_interp(program, ex) == ex.out for ex in problem.spec)
+            @test all(arith_interp(program, ex.in) == ex.out for ex in problem.spec)
         end
 
         @testset "harder task returns a valid program or nothing" begin

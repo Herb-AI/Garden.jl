@@ -1,32 +1,7 @@
 #=
-Language-model backends. A backend is a subtype of `AbstractLanguageModel` with
-one method:
-
-    generate(model, messages::Vector{ChatMessage}; seed = nothing) -> String
+Language-model backends: subtypes of `AbstractLanguageModel` with a `generate`
+method (see `types.jl`). A new backend only needs those two things.
 =#
-
-"""
-    ChatMessage(role, content)
-
-A single chat turn. `role` is `"system"`, `"user"` or `"assistant"`.
-"""
-struct ChatMessage
-    role::String
-    content::String
-end
-
-"""
-Abstract supertype of all language-model backends. Subtypes implement
-[`generate`](@ref).
-"""
-abstract type AbstractLanguageModel end
-
-"""
-    generate(model::AbstractLanguageModel, messages::Vector{ChatMessage}; seed = nothing) -> String
-
-Send `messages` to `model` and return the text of its answer.
-"""
-function generate end
 
 """
     OllamaModel(model::AbstractString; host, think, options, timeout)

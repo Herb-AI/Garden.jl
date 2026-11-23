@@ -1,10 +1,10 @@
 # LLM baseline: code reading guide
 
-How to approach reading the code of `Garden.LLMBaseline`. For how to *use* the baseline, see [README.md](README.md).
+How to approach reading, maintaining and extending the code of `Garden.LLMBaseline`. For how to *use* the baseline, see [README.md](README.md).
 
 ## Big picture
 
-The baseline is about 690 lines of Julia in four files, and one function, `llm_synth`, ties them together. It turns a grammar and a `Problem` into a prompt, asks an Ollama model for a program, and parses the answer back into a `RuleNode` of the grammar. An optional interpreter then checks each candidate on the examples.
+The baseline is about 800 lines of Julia in six files, and one function, `llm_synth`, ties them together. It turns a grammar and a `Problem` into a prompt, asks an Ollama model for a program, and parses the answer back into a `RuleNode` of the grammar. An optional interpreter then checks each candidate on the examples.
 
 ```mermaid
 flowchart LR
@@ -16,117 +16,121 @@ flowchart LR
     E -- "no: add feedback, ask again<br/>(up to max_repairs)" --> C
 ```
 
-Each box is one file. `llm_synth` runs this loop once per sample (`num_samples`), each in a fresh conversation; a parse error also counts as a "no" and gets feedback. When every sample and repair is used up, the valid program with the highest fitness is returned.
+`llm_synth` runs this loop once per sample (`num_samples`), each in a fresh conversation; a parse error also counts as a "no" and gets feedback. When every sample and repair is used up, the valid program with the highest fitness is returned.
 
-Everything lives in `Garden.jl/src/llm_baseline/`. The module is `Garden.LLMBaseline`.
+Everything lives in `Garden.jl/src/llm_baseline/`. The module is `Garden.LLMBaseline`. `method.jl` is the module file and includes the others in dependency order: each file uses only the files before it.
 
-| File | Lines | What it holds | Key names |
-| --- | --- | --- | --- |
-| [`method.jl`](method.jl) | 156 | Module header, the main loop, the result type | `llm_synth`, `_judge`, `evaluate`, `Attempt` |
-| [`backends.jl`](backends.jl) | 132 | Talking to the model | `AbstractLanguageModel`, `generate`, `OllamaModel`, `FunctionModel`, `RECOMMENDED_MODELS` |
-| [`prompts.jl`](prompts.jl) | 196 | Building the messages the model sees | `PromptTemplate`, `initial_messages`, `feedback_message`, `format_grammar`, `format_value` |
-| [`parsing.jl`](parsing.jl) | 202 | From answer text to `RuleNode` | `text2rulenode`, `extract_code`, `parse_program`, `expr2rulenode_typed` |
-| [`test/test_llm_baseline.jl`](../../test/test_llm_baseline.jl) | 187 | Offline tests with scripted models | — |
-| [`test/test_llm_baseline_live.jl`](../../test/test_llm_baseline_live.jl) | 94 | Opt-in tests against a real model | — |
+| File | What it holds | Key names |
+| --- | --- | --- |
+| [`types.jl`](types.jl) | The shared types and the two extension interfaces | `ChatMessage`, `Attempt`, `GrammarParseError`, `AbstractLanguageModel` + `generate`, `AbstractPrompt` + `initial_messages` / `feedback_message` |
+| [`syntax.jl`](syntax.jl) | Expression helpers used by both prompts and parser; all direct access to grammar fields | `normalize_expr`, `rule_string`, `_rules`, `_productions` |
+| [`backends.jl`](backends.jl) | The model implementations | `OllamaModel`, `FunctionModel`, `RECOMMENDED_MODELS` |
+| [`prompts.jl`](prompts.jl) | What the model sees | `PromptTemplate`, `format_grammar`, `format_examples`, `format_value` |
+| [`parsing.jl`](parsing.jl) | From answer text to `RuleNode` | `text2rulenode`, `extract_code`, `parse_program`, `expr2rulenode_typed` |
+| [`method.jl`](method.jl) | The module header and the main loop | `llm_synth`, `_run_sample!`, `_is_solution`, `_judge`, `evaluate` |
 
-The user-facing documentation is [README.md](README.md). This guide is about the code behind it. Line numbers below refer to the files as of this guide's commit.
+The tests are in `test/`: [`test_llm_baseline.jl`](../../test/test_llm_baseline.jl) (offline, scripted models), [`test_llm_baseline_live.jl`](../../test/test_llm_baseline_live.jl) (opt-in, a real model) and [`test_llm_baseline_benchmarks.jl`](../../test/test_llm_baseline_benchmarks.jl) (opt-in, every HerbBenchmarks benchmark).
 
 ## Reading order
 
-Read top-down from `llm_synth`, then the three helper files in the order data flows through them, and leave `parsing.jl` for last. It is the densest file and the one most worth reading with a REPL open. Plan on about an hour and a half for a first pass.
+Read `types.jl` first, because every other file is written in terms of it. Then follow `llm_synth` top-down, and leave `parsing.jl` for last: it is the densest file and the one most worth reading with a REPL open. Plan on about an hour and a half for a first pass.
 
-1. **Skim the README and run the offline tests** (15 min). Knowing what the code is supposed to do makes the rest faster to read. Run `Pkg.test()` in the Garden.jl folder.
-2. **`method.jl`: `llm_synth`, `_judge` and `evaluate`** (15 min). This is the spine: every other file is called from here.
-3. **`backends.jl`** (10 min). Short and self-contained: one interface, two implementations.
-4. **`prompts.jl`** (20 min). How the grammar and examples become text, and where the inductive-only guarantee is enforced.
-5. **`parsing.jl`** (30 min). How answer text becomes a `RuleNode`. Read it alongside the REPL exercises below.
-6. **The tests** (15 min). They pin down the edge cases each file handles, so they double as a specification.
+1. **Skim the README and run the offline tests** (15 min). Run `Pkg.test()` in the Garden.jl folder.
+2. **`types.jl`** (10 min). The vocabulary: what a message, an attempt, a model and a prompt are.
+3. **`method.jl`** (15 min). The spine: every other file is called from here.
+4. **`backends.jl`** (10 min). Short and self-contained.
+5. **`syntax.jl` and `prompts.jl`** (20 min). How the grammar and examples become text, and where the inductive-only guarantee is enforced.
+6. **`parsing.jl`** (30 min). How answer text becomes a `RuleNode`. Read it alongside the REPL exercises below.
+7. **The tests** (15 min). They pin down the edge cases each file handles, so they double as a specification.
 
 Inside each file, the public functions come first and the helpers (names starting with `_`) after them. You can skip a helper until a public function calls it.
 
-## Step 1: `method.jl`, the main loop
+## Step 1: `types.jl`, the vocabulary
 
-`llm_synth` (line 77) is two nested loops: an outer loop over independent samples, each a fresh conversation, and an inner loop over repair rounds within one conversation. Each turn of the inner loop makes one model call and turns the answer into an `Attempt` with `_judge` (line 120).
+This file has no logic. It defines the data that flows between the other files and the two places where the baseline is meant to be extended:
 
-Read `llm_synth` in this order:
+- **Models:** a subtype of `AbstractLanguageModel` with a `generate(model, messages; seed)` method that returns the answer text.
+- **Prompts:** a subtype of `AbstractPrompt` with `initial_messages(prompt, grammar, start, examples)` and `feedback_message(prompt, attempt)`.
 
-1. **Argument checks** (three lines). Everything else is plain loops.
-2. **The sample loop.** Each sample builds the first prompt with `initial_messages` and gets its own seed, `seed + sample - 1`.
-3. **The repair loop.** It returns at once when an answer is good enough: a valid program that solves every example, or, without an interpreter, any valid program. Otherwise the answer and a feedback message from `feedback_message` are appended to the conversation and the model is asked again.
-4. **Fallback.** When everything is used up, the valid program with the highest fitness is returned, or `nothing` if no answer parsed. The function always returns `(program, attempts)`.
+`Attempt` is the record of one model call: the full answer, the extracted code, the parsed program or the reason it could not be parsed, its fitness and failing examples, and the time taken. It is the only result type, and it is also what `feedback_message` receives, so a custom prompt can react to anything about a failed answer.
 
-`_judge` parses the answer with `text2rulenode`. A `GrammarParseError` becomes the attempt's `error`; any other exception is a bug and is rethrown. With an interpreter, `evaluate` (line 140) runs the program on every example. An interpreter exception counts as a failed example, and the exception is kept as that example's output so the feedback can show it.
+## Step 2: `method.jl`, the main loop
 
-There are no other error paths. If Ollama cannot be reached, `generate` throws and `llm_synth` stops: in a benchmark run, every later call would fail too.
+`llm_synth` checks its arguments, bundles what stays fixed during the call into a `_Setup` (grammar, start symbol, examples, interpreter, comparison), and runs one conversation per sample until one finds a solution. Each piece has its own small function:
 
-`Attempt` (line 28) is the only result type: one model call with its full answer, the extracted code, the parsed program or the reason it could not be parsed, fitness, failing examples and time. When a result looks wrong, the attempts are the first place to look. Run with `JULIA_DEBUG=Garden` to log each one as it happens.
+- **`_run_sample!`** runs one conversation: build the first prompt, then ask, judge and give feedback, up to `max_repairs` times. It appends every attempt to the shared list and returns the solution, if any.
+- **`_is_solution`** is the stopping rule: a valid program that solves every example, or, without an interpreter, any valid program.
+- **`_best_program`** is the final pick when nothing was a solution: the valid program with the highest fitness.
+- **`_judge`** turns one answer into an `Attempt`: parse it with `text2rulenode` (a `GrammarParseError` becomes the attempt's `error`; any other exception is a bug and is rethrown), then score it with `evaluate`.
+- **`evaluate`** runs `interpret(program, example.in)` on every example, the same convention as Probe. An interpreter exception counts as a failed example and is kept as that example's output, so the feedback can show it.
 
-## Step 2: `backends.jl`, talking to the model
+There are no other error paths. If Ollama cannot be reached, `generate` throws and `llm_synth` stops: in a benchmark run, every later call would fail too. Run with `JULIA_DEBUG=Garden` to log each attempt as it happens.
 
-The whole model interface is one function: `generate(model, messages; seed) -> String`. Nothing else in the baseline knows how a model is reached, so this file can be read in isolation.
+A new search strategy (say, samples in parallel, or stopping at a fitness threshold) changes `llm_synth`'s loop and `_is_solution`; `_run_sample!` and `_judge` can stay as they are.
 
-- **`ChatMessage`** (line 13) is a role and a text. A conversation is a `Vector{ChatMessage}`.
-- **`OllamaModel`** (line 49) holds the model tag, the server, the `think` setting, a dictionary of Ollama `options` and a timeout. Its `generate` (line 58) adds `"num_ctx" => 32768` unless the options set it, adds the seed, and posts to Ollama's native `/api/chat` endpoint. The native endpoint is used rather than Ollama's OpenAI-style one because only the native one accepts `num_ctx`.
-- **`FunctionModel`** (line 78) wraps any Julia function from messages to text. The offline tests use it to script answers. It ignores the seed.
-- **`_post_json`** (line 84) is the only network code. It uses the `Downloads` standard library with `throw = false`, so a refused connection and an HTTP error both become an `error(...)` with a readable message.
-- **`RECOMMENDED_MODELS`** (line 105) and **`DEFAULT_OLLAMA_MODEL`** (line 132) are data only.
+## Step 3: `backends.jl`, talking to the model
 
-When reading, ask: what would a new backend need? Only a subtype of `AbstractLanguageModel` and a `generate` method.
+- **`OllamaModel`** holds the model tag, the server, the `think` setting, a dictionary of Ollama `options` and a timeout. Its `generate` adds `"num_ctx" => 32768` unless the options set it, adds the seed, and posts to Ollama's native `/api/chat` endpoint. The native endpoint is used rather than Ollama's OpenAI-style one because only the native one accepts `num_ctx`.
+- **`FunctionModel`** wraps any Julia function from messages to text. The offline tests use it to script answers. It ignores the seed.
+- **`_post_json`** is the only network code. It uses the `Downloads` standard library with `throw = false`, so a refused connection and an HTTP error both become an `error(...)` with a readable message.
+- **`RECOMMENDED_MODELS`** and **`DEFAULT_OLLAMA_MODEL`** are data only.
 
-## Step 3: `prompts.jl`, what the model sees
+A new model server is a new struct and a `generate` method in this file; nothing else changes.
 
-A prompting strategy is any `AbstractPrompt` (line 15) with two methods: `initial_messages` builds the first conversation and `feedback_message` writes a repair message from an `Attempt`. `PromptTemplate` (line 71) is the only implementation: four texts, the system and user messages and two feedback messages.
+## Step 4: `syntax.jl` and `prompts.jl`, what the model sees
 
-The inductive-only guarantee is structural, and this is the point to understand first. `initial_messages` (line 83) is given the grammar, the start symbol and the examples, never the `Problem`. The problem's name therefore cannot reach the prompt, whatever template is used. The second safeguard is `format_value` (line 160), which prints values without the name of the module that defines their type, so a type like `StringState` does not reveal which benchmark module it comes from.
+`syntax.jl` holds what the prompt and the parser must agree on. `normalize_expr` puts an expression into one canonical form: no line numbers, no one-statement blocks, `elseif` as `if`, and `a; b` on one line (which Julia parses as `:toplevel`) as a block. `rule_string` prints an expression on one line, with blocks as `(a; b)` and conditionals as `(c ? a : b)`, and brackets around nested infix calls so that `a + (b + c)` keeps its shape. The syntax the model is shown is the syntax the parser accepts back.
 
-Read in this order:
+The file also holds the only code that reads the grammar's fields: `_rules`, `_productions` and `_nonterminals_in_order`. HerbGrammar exports `nonterminals(grammar)`, which the code uses where it can, but has no public accessor for a grammar's rules. If Herb changes its grammar type, these three lines are the place to update.
 
-1. **The default texts** (lines 17–56): `DEFAULT_SYSTEM_PROMPT`, `DEFAULT_USER_PROMPT`, `DEFAULT_PARSE_FEEDBACK` and `DEFAULT_WRONG_FEEDBACK`. These are the prompt as the model reads it.
-2. **`initial_messages`**, **`feedback_message`** (line 94) and **`fill_template`** (line 105). Templates use `{{key}}` slots: `{{grammar}}`, `{{start}}` and `{{examples}}` for the first message, `{{message}}` and `{{failures}}` for feedback. A slot with no value is left in the text unchanged.
-3. **`format_grammar`** (line 119) and **`rule_string`** (line 134). One line per nonterminal, the start symbol first, duplicate productions shown once. `_rs` gives blocks and conditionals a one-line form, `(a; b)` and `(c ? a : b)`, because Julia's own printer spreads them over several lines.
-4. **`format_examples`** (line 169), **`format_failures`** (line 177) and **`_labelled`** (line 192). A value whose printed form spans several lines, such as a robot grid, is put on indented lines of its own below its label.
+In `prompts.jl`, `PromptTemplate` is the default `AbstractPrompt`: four texts (system, user and two feedback messages) with `{{key}}` slots filled by `fill_template`. Read the `DEFAULT_*` texts first; they are the prompt as the model reads it.
 
-`rule_string` matters beyond prompts: the parser uses it in error messages, and the round-trip tests use it to print programs. The syntax the model is shown is the syntax the parser accepts back.
+The inductive-only guarantee rests on two things, and this is the point to understand:
 
-## Step 4: `parsing.jl`, from text to `RuleNode`
+1. **`initial_messages` is never given the `Problem`**, so the problem's name cannot reach the prompt, whatever prompt type is used.
+2. **`format_value` removes module names** from a printed value. `_modules_in` collects the module of every non-Base type in the value, including types nested in containers and struct fields, and `_strip_module_names` removes each module path from the printed text. Error messages in feedback go through `_error_line`, which keeps only the first line (later lines of a `MethodError` list file paths) and removes module names the same way.
+
+`format_examples` and `format_failures` lay values out with `_labelled`, which puts a value that spans several lines, such as a robot grid, on indented lines below its label.
+
+## Step 5: `parsing.jl`, from text to `RuleNode`
 
 The parser does not have its own grammar of Julia syntax. It lets Julia's parser build an expression, then derives that expression from the start symbol by matching it against the grammar's productions, top-down. It was written instead of using `HerbGrammar.expr2rulenode` because that function only handles plain function calls, and benchmark grammars also have blocks, infix operators, conditionals and literal constants.
 
-`text2rulenode` (line 26) runs three stages in order:
+`text2rulenode` runs three stages:
 
-1. **`extract_code`** (line 39) picks the program out of the answer: the last fenced block, also when its closing fence is missing, else the last inline `code` span. Reasoning traces in `<think>…</think>` are removed first.
-2. **`parse_program`** (line 56) calls `Meta.parseall`, turns syntax errors into a `GrammarParseError`, and removes wrappers with `_unwrap` (line 69): `function f(...) … end`, `return …` and `x = …`. An assignment is kept when the grammar itself contains one, as in the ARC grammar. `normalize_expr` (line 86) puts every expression into one canonical form: no line numbers, no one-statement blocks, `elseif` as `if`, and `a; b` on one line (which Julia parses as `:toplevel`) as a block. The same function is applied to the grammar's productions, so both sides of every comparison are in the same form.
-3. **`expr2rulenode_typed`** (line 119) does the derivation.
+1. **`extract_code`** picks the program out of the answer: the last fenced block, also when its closing fence is missing, else the last inline `code` span. Reasoning traces in `<think>…</think>` are removed first.
+2. **`parse_program`** calls `Meta.parseall`, turns syntax errors into a `GrammarParseError`, normalises the expression, and removes wrappers with `_unwrap`: `function f(...) … end`, `return …` and `x = …`. An assignment is kept when the grammar itself contains one, as in the ARC grammar.
+3. **`expr2rulenode_typed`** does the derivation.
 
-The derivation is the part to read slowly. `_Matcher` (line 98) holds the normalised productions, the set of nonterminals, the derivations in progress and a list of failures. Two functions call each other:
+The derivation is the part to read slowly. `_Matcher` holds the normalised productions, the set of nonterminals, the derivations in progress and a list of failures. Two functions call each other:
 
-- **`_derive(m, ex, type)`** (line 127) answers "can `ex` be derived from nonterminal `type`?". It tries the productions of `type` in grammar order and returns the first success as a `RuleNode`. The in-progress set stops infinite loops through unit productions like `A = B`, `B = A`.
-- **`_unify!(m, pat, ex, children)`** (line 148) walks one production's pattern and the expression side by side. A nonterminal in the pattern calls `_derive` on the matching sub-expression and appends the child. An `Expr` must have the same head and number of arguments. Anything else is a literal and goes through `_literal_equal` (line 179), which treats `1` and `0x01` as equal but `true` and `1` as different.
+- **`_derive(m, ex, type)`** answers "can `ex` be derived from nonterminal `type`?". It tries the productions of `type` in grammar order and returns the first success as a `RuleNode`. The in-progress set stops infinite loops through unit productions like `A = B`, `B = A`. Its comment states the one performance assumption in the code: there is no memoisation, which is fine for small answers but would be the first thing to add if parsing ever gets slow.
+- **`_unify!(m, pat, ex, children)`** walks one production's pattern and the expression side by side. A nonterminal in the pattern calls `_derive` on the matching sub-expression and appends the child. An `Expr` must have the same head and number of arguments. Anything else is a literal and goes through `_literal_equal`, which treats `1` and `0x01` as equal but `true` and `1` as different.
 
-Children are collected left to right, depth first, which is the order `rulenode2expr` reads them back. That is why the returned `RuleNode` prints back as the same program.
+Children are collected left to right, depth first, which is the order `rulenode2expr` reads them back, so the returned `RuleNode` prints back as the same program.
 
-`_reassociate` (line 167) makes model output fit binary productions: it re-nests a flat sequence `a; b; c` as `a; (b; c)` and a chain `a + b + c` as `(a + b) + c` before comparing. Without it, most multi-statement answers for the string and robot grammars would be rejected.
+`_reassociate` makes model output fit binary productions: it re-nests a flat sequence `a; b; c` as `a; (b; c)` and a chain `a + b + c` as `(a + b) + c`. Error messages come from `_same_shape` and `_explain_failure`: a failure is recorded only when no production of the nonterminal even has the right top-level form, and the message names the smallest such sub-expression, so `x + 3` reports `3`, not the whole program. When a program can be derived in more than one way, the first production in grammar order wins.
 
-Error messages come from `_same_shape` (line 185) and `_explain_failure` (line 194). A failure is recorded only when no production of the nonterminal even has the right top-level form. The message then names the smallest such sub-expression, so `x + 3` reports `3`, not the whole program.
+## Step 6: the tests as a specification
 
-One behaviour to keep in mind: when a program can be derived in more than one way, the first production in grammar order wins. Duplicate rules such as the two `ntInt = 1` lines in the SyGuS grammars are harmless for that reason.
-
-## Step 5: the tests as a specification
-
-The offline tests use two toy grammars, `arith` (integers, `+`, `*`, a conditional) and `seq` (a statement-sequence language like the string and robot benchmarks). Each testset pins down the behaviour of one file, so read each one after the file it covers.
+The offline tests use two toy grammars, `arith` (integers, `+`, `*`, a conditional) and `seq` (a statement-sequence language like the string and robot benchmarks).
 
 | Testset | Pins down | Read after |
 | --- | --- | --- |
-| `extract_code` | Which code block wins; reasoning traces and cut-off answers | `parsing.jl` stage 1 |
+| `extract_code` | Which code block wins; reasoning traces and cut-off answers | `parsing.jl` |
 | `parsing into the grammar` | Accepted surface syntax; where errors point | `parsing.jl` |
-| `round trip on all small programs` | Every program up to depth 4 (at most 300 per grammar) prints and parses back to itself | `rule_string` + the parser |
-| `prompt is purely inductive` | No problem name or module name in the prompt; string values printed unchanged; grammar layout | `prompts.jl` |
-| `llm_synth` | One-shot success, repairs, best-of-samples, no interpreter, nothing parseable, custom prompts | `method.jl` |
+| `round trip on all small programs` | Every program up to depth 4 (at most 300 per grammar) prints and parses back to itself, including nested infix calls | `syntax.jl` + the parser |
+| `prompt is purely inductive` | No problem name or module name in prompts and feedback, also for nested types and error messages | `prompts.jl` |
+| `llm_synth` | One-shot success, repairs, best-of-samples, no interpreter, nothing parseable, custom templates | `method.jl` |
+| `custom prompt type` | A minimal `AbstractPrompt` subtype (`TersePrompt`) works end to end | `types.jl` |
 | `Ollama backend` | Settings are stored; an unreachable server gives a clear error | `backends.jl` |
 
-The helper to understand is `scripted(replies)` at the top of `test_llm_baseline.jl`. It returns a `FunctionModel` that answers with the given replies in order, plus a list of every conversation the model was shown. The `llm_synth` tests check both what was returned and what the model saw, for example that the second conversation ends with a feedback message about a grammar error.
+`scripted(replies)` at the top of the file returns a `FunctionModel` that answers with the given replies in order, plus a list of every conversation the model was shown, so tests check both what was returned and what the model saw.
 
-`test_llm_baseline_live.jl` is skipped unless `GARDEN_LLM_TESTS=true`. It has the same shape against a real Ollama model, but it only expects the model to solve `x + 1`; for harder tasks it only checks that the pipeline returns a valid program or `nothing`.
+The two opt-in files are skipped unless an environment variable is set:
+
+- `test_llm_baseline_live.jl` (`GARDEN_LLM_TESTS=true`) runs the same kind of checks against a real Ollama model.
+- `test_llm_baseline_benchmarks.jl` (`GARDEN_BENCHMARK_TESTS=true`) checks every HerbBenchmarks benchmark: the parser round trip on random programs, no module or problem names in prompts and feedback, and that each benchmark's interpreter works with the `interpret(program, input)` convention. It is the strongest regression check for the parser and the formatting; run it after changing either. It runs from the README's experiment environment, because HerbBenchmarks is not a registered package.
 
 ## Hands-on exercises
 
@@ -139,6 +143,7 @@ import HerbBenchmarks.String_transformations_2020 as ST
 
 pair = get_problem_grammar_pair(ST, "100")
 g = pair.grammar
+interpret = (p, input) -> ST.interpret(p, input[:_arg_1])
 ```
 
 **1. See exactly what the model sees** (goes with `prompts.jl`). Note the grammar layout, the `(Operation; Sequence)` production, and `StringState(...)` printed without its module.
@@ -172,7 +177,7 @@ spy = L.FunctionModel(messages -> begin
     println("--- model sees ", length(messages), " messages; last one:\n", messages[end].content)
     "```julia\nmoveRight()\n```"
 end)
-program, attempts = L.llm_synth(g, :Start, pair.problem; model = spy, interpret = ST.interpret, max_repairs = 1)
+program, attempts = L.llm_synth(g, :Start, pair.problem; model = spy, interpret, max_repairs = 1)
 attempts
 ````
 
@@ -180,28 +185,29 @@ attempts
 
 ```julia
 program, attempts = L.llm_synth(g, :Start, pair.problem;
-    model = L.OllamaModel("qwen3.5:4b"), interpret = ST.interpret)
+    model = L.OllamaModel("qwen3.5:4b"), interpret)
 attempts[1].response
 ```
 
 ## Where to change things, and known limitations
 
-Most changes touch one file, because the files only meet through `generate`, `initial_messages` / `feedback_message` and `text2rulenode`.
+Most changes touch one file, because the files only meet through the interfaces in `types.jl` and through `text2rulenode`.
 
 | To change | Go to | Without editing the package? |
 | --- | --- | --- |
 | Wording of the prompt or feedback | `DEFAULT_*` constants in `prompts.jl` | Yes: `PromptTemplate(user = …)` |
-| How grammars or values are printed, or the prompting strategy (few-shot, two-stage) | New `AbstractPrompt` subtype; reuse `format_grammar`, `format_examples`, `fill_template` | Yes: define it in your own code |
+| How grammars or values are printed, or the prompting strategy (few-shot, two-stage) | New `AbstractPrompt` subtype; see `TersePrompt` in the tests | Yes: define it in your own code |
 | Model or Ollama settings | `OllamaModel` keywords and `options` | Yes |
-| A new model server | New `AbstractLanguageModel` + `generate` in `backends.jl` | Yes, but it belongs in the package |
-| Accepted answer syntax | `normalize_expr`, `_reassociate`, `_unwrap` in `parsing.jl` | No |
-| How candidates are ranked or when to stop | `llm_synth` in `method.jl` | No |
+| A new model server | New `AbstractLanguageModel` subtype + `generate` in `backends.jl` | Yes, but it belongs in the package |
+| Accepted answer syntax | `normalize_expr` (`syntax.jl`), `_reassociate`, `_unwrap` (`parsing.jl`) | No |
+| When to stop, or which program to return | `_is_solution`, `_best_program` in `method.jl` | No |
+| Support for a new Herb grammar type | `_rules`, `_productions`, `_nonterminals_in_order` in `syntax.jl` | No |
 
-After changing the parser, the round-trip testset is the one to watch: it checks that every small program still prints and parses back to itself.
+After changing the parser or the formatting, run the benchmark tests as well as the offline ones.
 
 Known limitations, in rough order of how likely they are to matter:
 
 - **Not yet run against a real model.** Everything was tested with scripted models and a fake Ollama server. The first live run may show answer formats the parser does not expect yet.
 - **Constants outside the grammar are rejected, not repaired.** SyGuS grammars offer only a few integers, so `substr_cvc(_arg_1, 5, 3)` fails even if `5` could be built as `1 + 1 + 1 + 1 + 1`. Only the repair feedback helps the model here.
 - **Samples run one after another.** `num_samples = 10` takes ten times as long as one sample.
-- **`Robots_2020` needs a custom interpreter.** Its inputs are stored under `:_arg_1_`, so its own `interpret` fails on every example (see the README).
+- **Stateful benchmark interpreters need a wrapper.** The string, pixel and robot interpreters take a state, not the input `Dict`; the README lists the one-line wrappers.
