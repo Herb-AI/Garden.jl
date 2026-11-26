@@ -11,7 +11,7 @@ flowchart LR
     A["Grammar, examples<br/>from HerbBenchmarks"] --> B["Build the prompt<br/>prompts.jl · initial_messages"]
     B --> C["Ask the model<br/>backends.jl · generate, via Ollama"]
     C --> D["Parse the answer<br/>parsing.jl · text2rulenode"]
-    D --> E{"Judge the attempt<br/>method.jl · _judge<br/>valid? all examples?"}
+    D --> E{"Judge the attempt<br/>method.jl · evaluate, _is_solution<br/>valid? all examples?"}
     E -- yes --> F["Return RuleNode"]
     E -- "no: add feedback, ask again<br/>(up to max_repairs)" --> C
 ```
@@ -27,7 +27,7 @@ Everything lives in `Garden.jl/src/llm_baseline/`. The module is `Garden.LLMBase
 | [`backends.jl`](backends.jl) | The model implementations | `OllamaModel`, `FunctionModel`, `RECOMMENDED_MODELS` |
 | [`prompts.jl`](prompts.jl) | What the model sees | `PromptTemplate`, `format_grammar`, `format_examples`, `format_value` |
 | [`parsing.jl`](parsing.jl) | From answer text to `RuleNode` | `text2rulenode`, `extract_code`, `parse_program`, `expr2rulenode_typed` |
-| [`method.jl`](method.jl) | The module header and the main loop | `llm_synth`, `_run_sample!`, `_is_solution`, `_judge`, `evaluate` |
+| [`method.jl`](method.jl) | The module header and the main loop | `llm_synth`, `_run_sample!`, `_is_solution`, `_best_program`, `evaluate` |
 
 The tests are in `test/`: [`test_llm_baseline.jl`](../../test/test_llm_baseline.jl) (offline, scripted models), [`test_llm_baseline_live.jl`](../../test/test_llm_baseline_live.jl) (opt-in, a real model) and [`test_llm_baseline_benchmarks.jl`](../../test/test_llm_baseline_benchmarks.jl) (opt-in, every HerbBenchmarks benchmark).
 
@@ -58,17 +58,16 @@ An `Evaluation` is the result of running the program on one example: the example
 
 ## Step 2: `method.jl`, the main loop
 
-`llm_synth` checks its arguments, bundles what stays fixed during the call into a `_Setup` (grammar, start symbol, examples, interpreter, comparison), and runs one conversation per sample until one finds a solution. Each piece has its own small function:
+`llm_synth` checks its arguments and runs one conversation per sample until one finds a solution. Each piece has its own small function:
 
-- **`_run_sample!`** runs one conversation: build the first prompt, then ask, judge and give feedback, up to `max_repairs` times. It appends every attempt to the shared list and returns the solution, if any.
+- **`_run_sample!`** runs one conversation: build the first prompt, then ask, parse, evaluate and give feedback, up to `max_repairs` times. Parsing goes through `_parse`, which turns a `GrammarParseError` into the attempt's `error`; any other exception is a bug and is rethrown. It appends every attempt to the shared list and returns the solution, if any.
 - **`_is_solution`** is the stopping rule: a valid program that solves every example, or, without an interpreter, any valid program.
 - **`_best_program`** is the final pick when nothing was a solution: the valid program with the highest fitness.
-- **`_judge`** turns one answer into an `Attempt`: parse it with `text2rulenode` (a `GrammarParseError` becomes the attempt's `error`; any other exception is a bug and is rethrown), then score it with `evaluate`.
 - **`evaluate`** runs `interpret(program, example.in)` on every example, the same convention as Probe, and returns one `Evaluation` per example. An interpreter exception counts as a wrong output and is kept as the evaluation's output, so the feedback can show it.
 
 There are no other error paths. If Ollama cannot be reached, `generate` throws and `llm_synth` stops: in a benchmark run, every later call would fail too. Run with `JULIA_DEBUG=Garden` to log each attempt as it happens.
 
-A new search strategy (say, samples in parallel, or stopping at a fitness threshold) changes `llm_synth`'s loop and `_is_solution`; `_run_sample!` and `_judge` can stay as they are.
+A new search strategy (say, samples in parallel, or stopping at a fitness threshold) changes `llm_synth`'s loop and `_is_solution`; `_run_sample!` can stay as it is.
 
 ## Step 3: `backends.jl`, talking to the model
 
