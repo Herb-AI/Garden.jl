@@ -57,11 +57,18 @@ end
 generate(m::FunctionModel, messages::Vector{ChatMessage}; seed = nothing) = string(m.f(messages))
 
 function _post_json(url::AbstractString, body; timeout::Real)
+    # Ollama sends nothing until the whole answer is ready, which can take minutes.
+    # By default, Downloads aborts a request that receives no data for 20 seconds,
+    # so that check is switched off here (as the `Downloads.request` docs show) and
+    # `timeout` is the only limit.
+    downloader = Downloads.Downloader()
+    downloader.easy_hook = (easy, info) ->
+    Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_TIME, 0)
     output = IOBuffer()
     response = Downloads.request(
         url; method = "POST", headers = ["Content-Type" => "application/json"],
         input = IOBuffer(JSON.json(body)), output = output,
-        timeout = timeout, throw = false
+        timeout = timeout, throw = false, downloader = downloader
     )
     text = String(take!(output))
     response isa Downloads.RequestError &&
