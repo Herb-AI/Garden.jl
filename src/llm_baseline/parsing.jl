@@ -79,8 +79,10 @@ struct _Matcher{G <: AbstractGrammar}
 end
 
 function _Matcher(grammar::AbstractGrammar)
-    return _Matcher(grammar, Any[normalize_expr(r) for r in _rules(grammar)],
-        Set{Symbol}(nonterminals(grammar)), Set{Tuple{Any, Symbol}}(), Tuple{Any, Symbol}[])
+    return _Matcher(
+        grammar, Any[normalize_expr(r) for r in _rules(grammar)],
+        Set{Symbol}(nonterminals(grammar)), Set{Tuple{Any, Symbol}}(), Tuple{Any, Symbol}[]
+    )
 end
 
 """

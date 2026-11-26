@@ -6,7 +6,12 @@ first and depends on nothing else in the module.
 """
     ChatMessage(role, content)
 
-A single chat turn. `role` is `"system"`, `"user"` or `"assistant"`.
+A single chat turn. `role` is `"system"` (the system prompt), `"user"` (user instructions) or `"assistant"` (feedback messages).
+A typical interactions is:
+- system: the rules
+- user: grammar and examples
+- assistant: the model's first answer, copied back
+- user: "Your program is wrong on these examples: …"
 """
 struct ChatMessage
     role::String
@@ -59,6 +64,22 @@ end
 Base.showerror(io::IO, e::GrammarParseError) = print(io, e.message)
 
 """
+    Evaluation(example, output, correct)
+
+The result of running a program on one example.
+
+- `example`: the `IOExample`.
+- `output`: what the program returned, or the exception it threw.
+- `correct`: whether `output` matched `example.out`, decided with the `eq` of
+  [`llm_synth`](@ref) when the program was run.
+"""
+struct Evaluation
+    example::IOExample
+    output::Any
+    correct::Bool
+end
+
+"""
     Attempt
 
 One model call made by [`llm_synth`](@ref).
@@ -69,11 +90,11 @@ One model call made by [`llm_synth`](@ref).
 - `code`: the program text extracted from it (`""` if none).
 - `program`: the parsed `RuleNode`, or `nothing` if the answer could not be parsed.
 - `error`: why the answer could not be parsed, or `nothing`.
-- `fitness`: fraction of examples solved; `missing` without an interpreter or
-  program.
-- `failures`: `(example, output)` for each failed example, where `output` is the
-  program's output or the exception it threw.
+- `evaluations`: one [`Evaluation`](@ref) per example, or `nothing` if the program
+  was not run (no interpreter, or no program).
 - `seconds`: time taken by the model call.
+
+[`fitness`](@ref) and [`failures`](@ref) are computed from `evaluations`.
 """
 struct Attempt
     sample::Int
@@ -82,7 +103,25 @@ struct Attempt
     code::String
     program::Union{Nothing, RuleNode}
     error::Union{Nothing, String}
-    fitness::Union{Missing, Float64}
-    failures::Vector{Tuple{IOExample, Any}}
+    evaluations::Union{Nothing, Vector{Evaluation}}
     seconds::Float64
 end
+
+"""
+    fitness(attempt) -> Union{Float64, Missing}
+
+The fraction of examples the attempt's program solves, or `missing` if it was not
+run.
+"""
+function fitness(a::Attempt)
+    isnothing(a.evaluations) && return missing
+    return count(e -> e.correct, a.evaluations) / length(a.evaluations)
+end
+
+"""
+    failures(attempt) -> Vector{Evaluation}
+
+The evaluations on which the attempt's program was wrong or threw an exception
+(empty if it was not run).
+"""
+failures(a::Attempt) = isnothing(a.evaluations) ? Evaluation[] : filter(e -> !e.correct, a.evaluations)

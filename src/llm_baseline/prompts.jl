@@ -87,7 +87,7 @@ end
 
 function feedback_message(p::PromptTemplate, a::Attempt)
     isnothing(a.program) && return fill_template(p.parse_feedback, Dict("message" => a.error))
-    return fill_template(p.wrong_feedback, Dict("failures" => format_failures(a.failures)))
+    return fill_template(p.wrong_feedback, Dict("failures" => format_failures(failures(a))))
 end
 
 """
@@ -177,13 +177,15 @@ function format_examples(examples)
     return join(blocks, "\n")
 end
 
-function format_failures(failures)
-    blocks = map(failures) do (ex, actual)
-        lines = [[_labelled("input $k", v) for (k, v) in _inputs(ex)];
-                 _labelled("expected output", ex.out);
-                 actual isa Exception ?
-                     "your program raised: " * _error_line(actual) :
-                     _labelled("your output", actual)]
+function format_failures(evaluations)
+    blocks = map(evaluations) do e
+        lines = [
+            [_labelled("input $k", v) for (k, v) in _inputs(e.example)];
+            _labelled("expected output", e.example.out);
+            e.output isa Exception ?
+                "your program raised: " * _error_line(e.output) :
+                _labelled("your output", e.output)
+        ]
         "- " * join(lines, "\n  ")
     end
     return join(blocks, "\n")

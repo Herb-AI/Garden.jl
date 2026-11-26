@@ -5,7 +5,8 @@ RuntimeGeneratedFunctions.init(@__MODULE__)
 
 import Garden.LLMBaseline as LLM
 import Garden.LLMBaseline: llm_synth, FunctionModel, ChatMessage, PromptTemplate,
-    AbstractPrompt, Attempt, GrammarParseError, text2rulenode, extract_code,
+    AbstractPrompt, Attempt, Evaluation, GrammarParseError, text2rulenode, extract_code,
+    evaluate, fitness, failures,
     format_grammar, format_examples, format_value, initial_messages, feedback_message,
     DEFAULT_PROMPT
 import Herb: HerbCore, @csgrammar, BFSIterator, IOExample, Problem, RuleNode, freeze_state,
@@ -13,15 +14,15 @@ import Herb: HerbCore, @csgrammar, BFSIterator, IOExample, Problem, RuleNode, fr
 
 # Primitives of a tiny sequence DSL used below.
 module SeqDSL
-struct Counter
-    n::Int
-end
-inc(c::Counter) = Counter(c.n + 1)
-dbl(c::Counter) = Counter(2c.n)
-struct Pair2
-    a::Counter
-    b::Counter
-end
+    struct Counter
+        n::Int
+    end
+    inc(c::Counter) = Counter(c.n + 1)
+    dbl(c::Counter) = Counter(2c.n)
+    struct Pair2
+        a::Counter
+        b::Counter
+    end
 end
 
 # The smallest custom prompting strategy: one user message, terse feedback.
@@ -30,17 +31,19 @@ function LLM.initial_messages(::TersePrompt, grammar, start, examples)
     return [ChatMessage("user", format_grammar(grammar, start) * "\n" * format_examples(examples))]
 end
 LLM.feedback_message(::TersePrompt, a::Attempt) =
-    isnothing(a.program) ? "Parse error: $(a.error)" : "Wrong on $(length(a.failures)) examples."
+    isnothing(a.program) ? "Parse error: $(a.error)" : "Wrong on $(length(failures(a))) examples."
 
 # Answers scripted replies in order and records every conversation it sees.
 function scripted(replies)
     seen = Vector{Vector{ChatMessage}}()
     i = Ref(0)
-    model = FunctionModel(messages -> begin
-        push!(seen, copy(messages))
-        i[] += 1
-        replies[min(i[], length(replies))]
-    end)
+    model = FunctionModel(
+        messages -> begin
+            push!(seen, copy(messages))
+            i[] += 1
+            replies[min(i[], length(replies))]
+        end
+    )
     return model, seen
 end
 
@@ -78,7 +81,8 @@ end
 
         rn = text2rulenode("```julia\nif x == 1\n  2\nelse\n  x * x\nend\n```", arith, :Start)
         @test rulenode2expr(rn, arith) == rulenode2expr(
-            text2rulenode("`(x == 1) ? 2 : x * x`", arith, :Start), arith)
+            text2rulenode("`(x == 1) ? 2 : x * x`", arith, :Start), arith
+        )
 
         rn = text2rulenode("```julia\nfunction f(x)\n  return x * 2\nend\n```", arith, :Start)
         @test rulenode2expr(rn, arith) == :(x * 2)
@@ -130,8 +134,10 @@ end
     end
 
     @testset "prompt is purely inductive" begin
-        problem = Problem("secret_task_42",
-            [IOExample(Dict{Symbol, Any}(:x => SeqDSL.Counter(1)), SeqDSL.Counter(4))])
+        problem = Problem(
+            "secret_task_42",
+            [IOExample(Dict{Symbol, Any}(:x => SeqDSL.Counter(1)), SeqDSL.Counter(4))]
+        )
         msgs = initial_messages(DEFAULT_PROMPT, seq, :Start, problem.spec)
         text = join([m.content for m in msgs], "\n")
         @test !occursin("secret_task_42", text)
@@ -151,8 +157,8 @@ end
         catch e
             e
         end
-        failure = (IOExample(Dict{Symbol, Any}(:x => 1), 2), err)
-        attempt = Attempt(1, 0, "", "", RuleNode(1), nothing, 0.0, [failure], 0.0)
+        failure = Evaluation(IOExample(Dict{Symbol, Any}(:x => 1), 2), err, false)
+        attempt = Attempt(1, 0, "", "", RuleNode(1), nothing, [failure], 0.0)
         msg = feedback_message(DEFAULT_PROMPT, attempt)
         @test occursin("your program raised: MethodError", msg) && !occursin("SeqDSL", msg)
         @test startswith(format_grammar(arith, :Start), "Start = Int\n")
@@ -160,21 +166,28 @@ end
 
     @testset "llm_synth" begin
         problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2x + 1) for x in 1:4])
-        interp = make_interpreter(arith; input_symbols = [:x],
-            target_module = @__MODULE__, cache_module = @__MODULE__)
+        interp = make_interpreter(
+            arith; input_symbols = [:x],
+            target_module = @__MODULE__, cache_module = @__MODULE__
+        )
 
         # One-shot success.
         model, _ = scripted(["```julia\nx + x + 1\n```"])
         prog, attempts = llm_synth(arith, :Start, problem; model, interpret = interp)
         @test prog isa RuleNode
         @test all(interp(prog, ex.in) == ex.out for ex in problem.spec)
-        @test length(attempts) == 1 && attempts[1].fitness == 1.0
+        @test length(attempts) == 1 && fitness(attempts[1]) == 1.0
+        @test length(attempts[1].evaluations) == 4 && isempty(failures(attempts[1]))
 
         # Repairs: grammar error, then wrong program, then correct.
-        model, seen = scripted(["```julia\nx + 3\n```", "```julia\nx + 1\n```",
-            "```julia\nx * 2 + 1\n```"])
+        model, seen = scripted(
+            [
+                "```julia\nx + 3\n```", "```julia\nx + 1\n```",
+                "```julia\nx * 2 + 1\n```",
+            ]
+        )
         prog, attempts = llm_synth(arith, :Start, problem; model, interpret = interp, max_repairs = 2)
-        @test length(attempts) == 3 && attempts[3].fitness == 1.0
+        @test length(attempts) == 3 && fitness(attempts[3]) == 1.0
         @test length(seen[2]) == 4 && seen[2][end].role == "user"
         @test occursin("cannot be derived", seen[2][end].content)
         @test occursin("wrong on these examples", seen[3][end].content)
@@ -184,14 +197,19 @@ end
         model, _ = scripted(["no code here", "```julia\nx\n```", "`(x == 1) ? 1 + 2 : x`"])
         prog, attempts = llm_synth(arith, :Start, problem; model, interpret = interp, num_samples = 3)
         @test length(attempts) == 3 && isnothing(attempts[1].program)
-        @test attempts[3].fitness == 0.25
+        @test fitness(attempts[3]) == 0.25
+        # Every output is kept, also on the examples the program gets right.
+        @test [e.output for e in attempts[3].evaluations] == [3, 2, 3, 4]
+        @test [e.correct for e in attempts[3].evaluations] == [true, false, false, false]
+        @test [e.example.in[:x] for e in failures(attempts[3])] == [2, 3, 4]
         @test rulenode2expr(prog, arith) == rulenode2expr(attempts[3].program, arith)
 
         # Without an interpreter the first valid program is returned.
         model, _ = scripted(["```julia\nx + 7\n```", "```julia\nx + 2\n```"])
         prog, attempts = llm_synth(arith, :Start, problem; model, num_samples = 2)
         @test rulenode2expr(prog, arith) == :(x + 2)
-        @test ismissing(attempts[2].fitness)
+        @test ismissing(fitness(attempts[2])) && isnothing(attempts[2].evaluations)
+        @test isempty(failures(attempts[2]))
 
         # Nothing parseable at all.
         model, _ = scripted(["I don't know."])
@@ -210,11 +228,15 @@ end
 
     @testset "custom prompt type" begin
         problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2x + 1) for x in 1:4])
-        interp = make_interpreter(arith; input_symbols = [:x],
-            target_module = @__MODULE__, cache_module = @__MODULE__)
+        interp = make_interpreter(
+            arith; input_symbols = [:x],
+            target_module = @__MODULE__, cache_module = @__MODULE__
+        )
         model, seen = scripted(["`x + 3`", "`x + 1`", "`x + x + 1`"])
-        prog, attempts = llm_synth(arith, :Start, problem; model, prompt = TersePrompt(),
-            interpret = interp, max_repairs = 2)
+        prog, attempts = llm_synth(
+            arith, :Start, problem; model, prompt = TersePrompt(),
+            interpret = interp, max_repairs = 2
+        )
         @test rulenode2expr(prog, arith) == :((x + x) + 1)
         @test length(seen[1]) == 1 && startswith(seen[1][1].content, "Start = Int")
         @test startswith(seen[2][end].content, "Parse error: `3` cannot be derived")

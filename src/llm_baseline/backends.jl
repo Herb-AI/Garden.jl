@@ -78,27 +78,41 @@ at 4-bit quantisation and a short note. See the README for the reasoning behind
 the selection.
 """
 const RECOMMENDED_MODELS = [
-    (name = "gpt-oss-20b", ollama = "gpt-oss:20b",
+    (
+        name = "gpt-oss-20b", ollama = "gpt-oss:20b",
         memory_gb = 16, reasoning = true,
-        note = "Default. 21B MoE (~3.6B active): fast, strong reasoning; set think=\"high\" for hard tasks."),
-    (name = "Qwen3.8-27B", ollama = "qwen3.8:27b",
+        note = "Default. 21B MoE (~3.6B active): fast, strong reasoning; set think=\"high\" for hard tasks.",
+    ),
+    (
+        name = "Qwen3.8-27B", ollama = "qwen3.8:27b",
         memory_gb = 24, reasoning = true,
-        note = "Strongest dense model in this size class; slower than the MoE models."),
-    (name = "Gemma 4 26B A4B", ollama = "gemma4:26b",
+        note = "Strongest dense model in this size class; slower than the MoE models.",
+    ),
+    (
+        name = "Gemma 4 26B A4B", ollama = "gemma4:26b",
         memory_gb = 20, reasoning = true,
-        note = "MoE (~3.8B active): fast, good reasoning."),
-    (name = "Gemma 4 31B", ollama = "gemma4:31b",
+        note = "MoE (~3.8B active): fast, good reasoning.",
+    ),
+    (
+        name = "Gemma 4 31B", ollama = "gemma4:31b",
         memory_gb = 24, reasoning = true,
-        note = "Dense; higher quality than the 26B MoE, slower."),
-    (name = "Qwen3-Coder-30B-A3B", ollama = "qwen3-coder:30b",
+        note = "Dense; higher quality than the 26B MoE, slower.",
+    ),
+    (
+        name = "Qwen3-Coder-30B-A3B", ollama = "qwen3-coder:30b",
         memory_gb = 20, reasoning = false,
-        note = "Non-reasoning code model: a cheap 'no thinking' baseline."),
-    (name = "Qwen3.5-9B", ollama = "qwen3.5:9b",
+        note = "Non-reasoning code model: a cheap 'no thinking' baseline.",
+    ),
+    (
+        name = "Qwen3.5-9B", ollama = "qwen3.5:9b",
         memory_gb = 8, reasoning = true,
-        note = "Small-model baseline."),
-    (name = "Qwen3.5-4B", ollama = "qwen3.5:4b",
+        note = "Small-model baseline.",
+    ),
+    (
+        name = "Qwen3.5-4B", ollama = "qwen3.5:4b",
         memory_gb = 4, reasoning = true,
-        note = "Smallest useful baseline."),
+        note = "Smallest useful baseline.",
+    ),
 ]
 
 """

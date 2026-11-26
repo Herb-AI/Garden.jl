@@ -22,7 +22,7 @@ Everything lives in `Garden.jl/src/llm_baseline/`. The module is `Garden.LLMBase
 
 | File | What it holds | Key names |
 | --- | --- | --- |
-| [`types.jl`](types.jl) | The shared types and the two extension interfaces | `ChatMessage`, `Attempt`, `GrammarParseError`, `AbstractLanguageModel` + `generate`, `AbstractPrompt` + `initial_messages` / `feedback_message` |
+| [`types.jl`](types.jl) | The shared types and the two extension interfaces | `ChatMessage`, `Attempt`, `Evaluation`, `fitness`, `failures`, `GrammarParseError`, `AbstractLanguageModel` + `generate`, `AbstractPrompt` + `initial_messages` / `feedback_message` |
 | [`syntax.jl`](syntax.jl) | Expression helpers used by both prompts and parser; all direct access to grammar fields | `normalize_expr`, `rule_string`, `_rules`, `_productions` |
 | [`backends.jl`](backends.jl) | The model implementations | `OllamaModel`, `FunctionModel`, `RECOMMENDED_MODELS` |
 | [`prompts.jl`](prompts.jl) | What the model sees | `PromptTemplate`, `format_grammar`, `format_examples`, `format_value` |
@@ -52,7 +52,9 @@ This file has no logic. It defines the data that flows between the other files a
 - **Models:** a subtype of `AbstractLanguageModel` with a `generate(model, messages; seed)` method that returns the answer text.
 - **Prompts:** a subtype of `AbstractPrompt` with `initial_messages(prompt, grammar, start, examples)` and `feedback_message(prompt, attempt)`.
 
-`Attempt` is the record of one model call: the full answer, the extracted code, the parsed program or the reason it could not be parsed, its fitness and failing examples, and the time taken. It is the only result type, and it is also what `feedback_message` receives, so a custom prompt can react to anything about a failed answer.
+`Attempt` is the record of one model call: the full answer, the extracted code, the parsed program or the reason it could not be parsed, its `evaluations`, and the time taken. It is the only result type, and it is also what `feedback_message` receives, so a custom prompt can react to anything about a failed answer.
+
+An `Evaluation` is the result of running the program on one example: the example, the output (or the exception the program threw) and whether the output was correct. Correctness is decided once, with `llm_synth`'s `eq`, when the program runs. `fitness(attempt)` and `failures(attempt)` are computed from the evaluations rather than stored, so they can never disagree with them. A new measure, such as the fraction of examples on which the program did not crash, is another small function over `attempt.evaluations`.
 
 ## Step 2: `method.jl`, the main loop
 
@@ -62,7 +64,7 @@ This file has no logic. It defines the data that flows between the other files a
 - **`_is_solution`** is the stopping rule: a valid program that solves every example, or, without an interpreter, any valid program.
 - **`_best_program`** is the final pick when nothing was a solution: the valid program with the highest fitness.
 - **`_judge`** turns one answer into an `Attempt`: parse it with `text2rulenode` (a `GrammarParseError` becomes the attempt's `error`; any other exception is a bug and is rethrown), then score it with `evaluate`.
-- **`evaluate`** runs `interpret(program, example.in)` on every example, the same convention as Probe. An interpreter exception counts as a failed example and is kept as that example's output, so the feedback can show it.
+- **`evaluate`** runs `interpret(program, example.in)` on every example, the same convention as Probe, and returns one `Evaluation` per example. An interpreter exception counts as a wrong output and is kept as the evaluation's output, so the feedback can show it.
 
 There are no other error paths. If Ollama cannot be reached, `generate` throws and `llm_synth` stops: in a benchmark run, every later call would fail too. Run with `JULIA_DEBUG=Garden` to log each attempt as it happens.
 

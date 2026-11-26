@@ -92,11 +92,13 @@ function _run_sample!(attempts, setup::_Setup, model, prompt, sample, max_repair
         response = generate(model, messages; seed)
         attempt = _judge(setup, response, time() - t; sample, repair)
         push!(attempts, attempt)
-        @debug "LLM attempt" sample repair attempt.code attempt.error attempt.fitness
+        @debug "LLM attempt" sample repair attempt.code attempt.error fitness(attempt)
 
         _is_solution(attempt, setup) && return attempt.program
-        push!(messages, ChatMessage("assistant", response),
-            ChatMessage("user", feedback_message(prompt, attempt)))
+        push!(
+            messages, ChatMessage("assistant", response),
+            ChatMessage("user", feedback_message(prompt, attempt))
+        )
     end
     return nothing
 end
@@ -104,12 +106,12 @@ end
 # Good enough to stop: a valid program that solves every example, or, without an
 # interpreter to check it, any valid program.
 _is_solution(a::Attempt, setup::_Setup) =
-    !isnothing(a.program) && (isnothing(setup.interpret) || a.fitness == 1)
+    !isnothing(a.program) && (isnothing(setup.interpret) || fitness(a) == 1)
 
 # The valid program with the highest fitness, or `nothing` if no answer parsed.
 function _best_program(attempts)
     valid = filter(a -> !isnothing(a.program), attempts)
-    return isempty(valid) ? nothing : argmax(a -> a.fitness, valid).program
+    return isempty(valid) ? nothing : argmax(fitness, valid).program
 end
 
 # Parse a model answer and, with an interpreter, score it on the examples.
@@ -120,34 +122,28 @@ function _judge(setup::_Setup, response, seconds; sample, repair)
         e isa GrammarParseError || rethrow()
         nothing, e.message
     end
-    fitness, failures = isnothing(program) || isnothing(setup.interpret) ?
-        (missing, Tuple{IOExample, Any}[]) :
+    evaluations = isnothing(program) || isnothing(setup.interpret) ? nothing :
         evaluate(program, setup.examples, setup.interpret, setup.eq)
     code = something(extract_code(response), "")
-    return Attempt(sample, repair, response, code, program, error, fitness, failures, seconds)
+    return Attempt(sample, repair, response, code, program, error, evaluations, seconds)
 end
 
 """
-    evaluate(program, examples, interpret, eq = (==)) -> (fitness, failures)
+    evaluate(program, examples, interpret, eq = (==)) -> Vector{Evaluation}
 
-Run `interpret(program, example.in)` on every example. `fitness` is the fraction
-of examples whose output matches; `failures` holds `(example, output)` for the
-others, where `output` is the exception if the program threw one.
+Run `interpret(program, example.in)` on every example. An exception counts as a
+wrong output and is kept as the evaluation's `output`.
 """
 function evaluate(program, examples, interpret, eq = (==))
-    failures = Tuple{IOExample, Any}[]
-    for ex in examples
+    return map(examples) do ex
         output = try
             interpret(program, ex.in)
         catch e
             e isa InterruptException && rethrow()
             e
         end
-        if output isa Exception || !eq(output, ex.out)
-            push!(failures, (ex, output))
-        end
+        Evaluation(ex, output, !(output isa Exception) && eq(output, ex.out))
     end
-    return 1 - length(failures) / length(examples), failures
 end
 
 end # module LLMBaseline

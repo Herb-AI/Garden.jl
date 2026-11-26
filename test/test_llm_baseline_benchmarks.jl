@@ -63,12 +63,11 @@ else
                 # Feedback on a (random, almost surely wrong) program reveals nothing either.
                 interpret = make_interpreter(g)
                 (isnothing(interpret) || isempty(programs)) && continue
-                fitness, failures = BL.evaluate(first(programs), pair.problem.spec, interpret)
-                attempt = BL.Attempt(1, 0, "", "", first(programs), nothing, fitness, failures, 0.0)
+                evaluations = BL.evaluate(first(programs), pair.problem.spec, interpret)
+                attempt = BL.Attempt(1, 0, "", "", first(programs), nothing, evaluations, 0.0)
                 @test !leaks(BL.feedback_message(BL.DEFAULT_PROMPT, attempt), benchmark)
                 programs_run += 1
-                outputs_produced += count(f -> !(last(f) isa Exception), failures) +
-                    length(pair.problem.spec) - length(failures)
+                outputs_produced += count(e -> !(e.output isa Exception), evaluations)
             end
             # A wrongly wired interpreter throws on every example.
             programs_run > 0 && @test outputs_produced > 0

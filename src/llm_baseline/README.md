@@ -79,7 +79,7 @@ Save this as `run.jl` in your environment and run `julia --project=. run.jl`:
 
 ```julia
 using Herb, HerbBenchmarks
-using Garden.LLMBaseline: llm_synth, OllamaModel
+using Garden.LLMBaseline: llm_synth, OllamaModel, fitness
 import HerbBenchmarks.PBE_SLIA_Track_2019 as SLIA
 
 pair = get_problem_grammar_pair(SLIA, "17212077")   # "01/15/2013" -> "01/2013", ...
@@ -90,7 +90,7 @@ program, attempts = llm_synth(pair.grammar, :Start, pair.problem;
     interpret = interp)
 
 isnothing(program) || println(rulenode2expr(program, pair.grammar))
-attempts[end].fitness   # 1.0 when the program solves all examples
+fitness(attempts[end])   # 1.0 when the program solves all examples
 ```
 
 The first run takes a minute or two to compile. After that, a problem takes from
@@ -105,7 +105,7 @@ candidate with the highest fitness is returned.
 
 ```julia
 using Herb, HerbBenchmarks, Garden
-using Garden.LLMBaseline: llm_synth, OllamaModel
+using Garden.LLMBaseline: llm_synth, OllamaModel, fitness
 import HerbBenchmarks.PBE_SLIA_Track_2019 as SLIA
 
 model = OllamaModel("gpt-oss:20b"; think = "medium")
@@ -113,7 +113,7 @@ results = map(get_all_problem_grammar_pairs(SLIA)) do pair
     interp = SLIA.make_SLIA_interpreter(pair.grammar)
     seconds = @elapsed program, attempts = llm_synth(pair.grammar, :Start, pair.problem;
         model, interpret = interp)
-    (id = pair.identifier, solved = any(a -> a.fitness === 1.0, attempts),
+    (id = pair.identifier, solved = any(a -> fitness(a) === 1.0, attempts),
      program = isnothing(program) ? nothing : rulenode2expr(program, pair.grammar),
      seconds)
 end
@@ -241,7 +241,7 @@ feedback_message(prompt, attempt::Attempt) -> String
 
 The helpers `format_grammar`, `format_examples`, `format_value` and `fill_template`
 are there to reuse, and an `Attempt` carries everything about the failed answer
-(its `error`, or its `failures` with the program's outputs). The `TersePrompt` in
+(its `error`, or its `evaluations`; `failures(attempt)` gives the wrong ones). The `TersePrompt` in
 `test/test_llm_baseline.jl` is a complete example in eight lines.
 
 What the default prompt shows: the grammar as one line per nonterminal
@@ -264,7 +264,8 @@ information about the task.
 
 Returns `(program, attempts)`: `program::Union{RuleNode, Nothing}` and one
 `Attempt` per model call, with the full answer, the extracted code, the parsed
-program or the reason it could not be parsed, its fitness and failing examples,
+program or the reason it could not be parsed, its `evaluations` (the program's
+output on every example, and whether it was correct),
 and the time taken. Interpreter exceptions count as failed examples. If Ollama
 cannot be reached, `llm_synth` throws.
 
@@ -294,7 +295,7 @@ The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 | `Request to … failed … Is Ollama running?` | Start the Ollama app (or `ollama serve`), or check `host`. |
 | `HTTP 404` mentioning the model | The model isn't pulled (`ollama pull <tag>`), or the tag is misspelled; `ollama list` shows what you have. |
 | Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `"num_ctx"` (e.g. `65536`) and/or `"num_predict"` in `OllamaModel`'s `options`, or lower `think`. |
-| Every attempt has fitness 0, and `attempts[1].failures` shows a `KeyError` or `MethodError` | The interpreter does not take the input `Dict`: wrap it, e.g. `(p, input) -> Robots_2020.interpret(p, input[:_arg_1_])` (see the interpreter table above). |
+| Every attempt has fitness 0, and the outputs in `attempts[1].evaluations` are `KeyError`s or `MethodError`s | The interpreter does not take the input `Dict`: wrap it, e.g. `(p, input) -> Robots_2020.interpret(p, input[:_arg_1_])` (see the interpreter table above). |
 | Very slow | Use a mixture-of-experts model (`gpt-oss:20b`, `gemma4:26b`), the `-mlx` builds on Apple Silicon, or `think = "low"`. |
 
 ## Tests
