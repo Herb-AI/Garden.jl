@@ -18,6 +18,14 @@
   </tr>
 </table>
 
+## Synthesizers
+
+- [`Probe`](src/Probe/README.md): bottom-up enumeration with just-in-time learning of rule probabilities.
+- [`FrAngel`](src/frangel/README.md): component-based synthesis with fragment mining.
+- [`LLMBaseline`](src/llm_baseline/README.md): asks a (local) language model for a program
+  given the grammar and examples, and returns it as a `RuleNode`. Needs
+  [Ollama](https://ollama.com); see its README for installation.
+
 ## Structure
 
 Each synthesizer has its own dedicated folder with the suggested structure:

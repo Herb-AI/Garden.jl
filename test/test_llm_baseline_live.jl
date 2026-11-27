@@ -1,0 +1,116 @@
+#=
+Live tests of the LLM baseline against a real model served by Ollama.
+
+Disabled by default. Enable with
+
+    GARDEN_LLM_TESTS=true julia --project -e 'using Pkg; Pkg.test()'
+
+Optional settings:
+- `GARDEN_LLM_MODEL` (default `qwen3.5:4b`): Ollama tag of the model to use.
+- `GARDEN_LLM_HOST` (default `http://localhost:11434`): Ollama server.
+- `GARDEN_LLM_THINK` (default `false`): reasoning for the model under test.
+
+The model must already be pulled (`ollama pull qwen3.5:4b`). Model answers are
+non-deterministic, so these tests check that the pipeline works end to end on
+real answers, and only expect the model to solve trivial tasks.
+
+Reasoning is off by default because a 4B reasoning model spends several minutes
+and over ten thousand tokens on even a trivial task here, which makes the suite
+look stalled; `"num_predict"` keeps a model that falls into a repetition loop
+from running until the timeout. Set `GARDEN_LLM_THINK=true` to test the
+reasoning path, and give it a much longer `timeout`.
+=#
+
+using Test
+
+import RuntimeGeneratedFunctions
+RuntimeGeneratedFunctions.init(@__MODULE__)
+
+import Garden.LLMBaseline as LiveLLM
+import Herb: HerbCore, @csgrammar, IOExample, Problem, RuleNode, make_interpreter,
+    rulenode2expr
+
+const LIVE_LLM_TESTS = lowercase(get(ENV, "GARDEN_LLM_TESTS", "false")) in ("1", "true", "yes")
+
+if !LIVE_LLM_TESTS
+    @info "Skipping live LLM tests (set GARDEN_LLM_TESTS=true to run them)."
+else
+    live_model_tag = get(ENV, "GARDEN_LLM_MODEL", "qwen3.5:4b")
+    live_host = get(ENV, "GARDEN_LLM_HOST", "http://localhost:11434")
+    live_think = lowercase(get(ENV, "GARDEN_LLM_THINK", "false")) in ("1", "true", "yes")
+    live_model = LiveLLM.OllamaModel(
+        live_model_tag;
+        host = live_host, think = live_think,
+        options = Dict("temperature" => 0.7, "num_ctx" => 16384, "num_predict" => 2048),
+        timeout = 600
+    )
+
+    @testset verbose = true "LLMBaseline live ($live_model_tag)" begin
+        @testset "model answers" begin
+            answer = LiveLLM.generate(
+                live_model,
+                [LiveLLM.ChatMessage("user", "Reply with the single word: ready")]; seed = 1
+            )
+            @test answer isa String
+            @test !isempty(answer)
+        end
+
+        arith = @csgrammar begin
+            Start = Int
+            Int = Int + Int
+            Int = Int * Int
+            Int = |(1:2)
+            Int = x
+        end
+        arith_interp = make_interpreter(
+            arith; input_symbols = [:x],
+            target_module = @__MODULE__, cache_module = @__MODULE__
+        )
+
+        @testset "solves x + 1" begin
+            problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), x + 1) for x in 1:5])
+            program, attempts = LiveLLM.llm_synth(
+                arith, :Start, problem;
+                model = live_model, interpret = arith_interp,
+                num_samples = 3, max_repairs = 2, seed = 1
+            )
+            @info "x + 1" attempts program = isnothing(program) ? nothing : rulenode2expr(program, arith)
+            @test any(a -> !isnothing(a.program), attempts)   # real answers parse
+            @test any(a -> LiveLLM.fitness(a) === 1.0, attempts)
+            @test program isa RuleNode
+            @test all(arith_interp(program, ex.in) == ex.out for ex in problem.spec)
+        end
+
+        @testset "harder task returns a valid program or nothing" begin
+            problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2x * x + 1) for x in 1:5])
+            program, attempts = LiveLLM.llm_synth(
+                arith, :Start, problem;
+                model = live_model, interpret = arith_interp, max_repairs = 1, seed = 2
+            )
+            @info "2x^2 + 1" attempts program = isnothing(program) ? nothing : rulenode2expr(program, arith)
+            @test length(attempts) >= 1
+            if !isnothing(program)
+                @test rulenode2expr(program, arith) isa Union{Expr, Symbol, Int}
+                @test 0.0 <= maximum(a -> coalesce(LiveLLM.fitness(a), 0.0), attempts) <= 1.0
+            end
+        end
+
+        @testset "statement-sequence grammar" begin
+            # Pure inductive task on an unfamiliar DSL: only well-formedness is required.
+            seq = @csgrammar begin
+                Start = Sequence
+                Sequence = Operation
+                Sequence = (Operation; Sequence)
+                Operation = inc() | dbl()
+            end
+            problem = Problem([IOExample(Dict{Symbol, Any}(:x => x), 2(x + 1)) for x in 1:3])
+            program, attempts = LiveLLM.llm_synth(
+                seq, :Start, problem;
+                model = live_model, num_samples = 2, max_repairs = 2, seed = 3
+            )
+            @info "sequence DSL" attempts program = isnothing(program) ? nothing : rulenode2expr(program, seq)
+            @test any(a -> !isnothing(a.program), attempts)
+            @test program isa RuleNode
+        end
+    end
+end
