@@ -24,8 +24,11 @@ variables) exactly as it appears in the grammar.
 allowed, and you cannot define helper functions or variables of your own.
 - Write the program in the same concrete syntax as the productions.
 
-Finish your answer with the program in a single ```julia fenced code block, \
-with nothing after it."""
+Think it through in at most three short sentences, then finish your answer \
+with the program in a single ```julia fenced code block, with nothing after \
+it. The block holds the finished program: a single expression with every \
+nonterminal already replaced, not the grammar's productions and not the \
+derivation steps."""
 
 const DEFAULT_USER_PROMPT = """
 Grammar (start symbol: {{start}}):

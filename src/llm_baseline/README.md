@@ -151,7 +151,7 @@ VRAM at 4-bit), as of November 2026. They are listed in
 | Gemma 4 26B A4B | `gemma4:26b` | 20 GB | MoE (~3.8B active), reasoning; fast. |
 | Gemma 4 31B | `gemma4:31b` | 24 GB | Dense; better than 26B A4B, slower. |
 | Qwen3-Coder-30B-A3B | `qwen3-coder:30b` | 20 GB | Non-reasoning code model: a cheap "no thinking" baseline. |
-| Qwen3.5-9B / 4B | `qwen3.5:9b`, `qwen3.5:4b` | 8 / 4 GB | Small-model baselines; reasoning is off by default on the small Qwen3.5 models, so set `think = true`. |
+| Qwen3.5-9B / 4B | `qwen3.5:9b`, `qwen3.5:4b` | 8 / 4 GB | Small-model baselines; reasoning is **on** by default, and these models reason at great length (over ten thousand tokens, several minutes, on a trivial task), so set `think = false` unless you want to measure the reasoning path. |
 
 Why these:
 
@@ -196,8 +196,11 @@ OllamaModel("gpt-oss:20b"; think = "high", host = "http://other-machine:11434")
 FunctionModel(messages -> "```julia\nx + 1\n```")
 ```
 
-`OllamaModel` keywords: `host`, `think`, `options` and `timeout`. `options` takes
-any Ollama option by its Ollama name, such as `"temperature"`, `"num_ctx"` or `"num_predict"`.
+`OllamaModel` keywords: `host`, `think`, `options`, `timeout` and `idle_timeout`.
+`options` takes any Ollama option by its Ollama name, such as `"temperature"`,
+`"num_ctx"` or `"num_predict"`. Answers are streamed, so `timeout` bounds the whole
+request while `idle_timeout` bounds silence; run with `JULIA_DEBUG=Garden` to watch
+the chunks arrive during a long answer.
 
 Other model servers are not supported yet. A new backend is a subtype of
 `AbstractLanguageModel` with one method:
@@ -297,6 +300,7 @@ The parser is available on its own: `text2rulenode(text, grammar, :Start)`, or
 | Attempts end in `no program found` | The model ran out of tokens while reasoning: raise `"num_ctx"` (e.g. `65536`) and/or `"num_predict"` in `OllamaModel`'s `options`, or lower `think`. |
 | Every attempt has fitness 0, and the outputs in `attempts[1].evaluations` are `KeyError`s or `MethodError`s | The interpreter does not take the input `Dict`: wrap it, e.g. `(p, input) -> Robots_2020.interpret(p, input[:_arg_1_])` (see the interpreter table above). |
 | Very slow | Use a mixture-of-experts model (`gpt-oss:20b`, `gemma4:26b`), the `-mlx` builds on Apple Silicon, or `think = "low"`. |
+| A call seems to hang | It is almost always the model reasoning, not the connection. Run with `JULIA_DEBUG=Garden`: if chunks keep arriving, set `think = false` and a `"num_predict"` of a few thousand. A small reasoning model can spend minutes on a trivial task, and one that falls into a repetition loop keeps going until `"num_predict"` or `timeout` stops it. Genuine silence trips `idle_timeout` and raises `Operation too slow`. |
 
 ## Tests
 

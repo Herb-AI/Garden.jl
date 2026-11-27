@@ -8,10 +8,17 @@ Disabled by default. Enable with
 Optional settings:
 - `GARDEN_LLM_MODEL` (default `qwen3.5:4b`): Ollama tag of the model to use.
 - `GARDEN_LLM_HOST` (default `http://localhost:11434`): Ollama server.
+- `GARDEN_LLM_THINK` (default `false`): reasoning for the model under test.
 
 The model must already be pulled (`ollama pull qwen3.5:4b`). Model answers are
 non-deterministic, so these tests check that the pipeline works end to end on
 real answers, and only expect the model to solve trivial tasks.
+
+Reasoning is off by default because a 4B reasoning model spends several minutes
+and over ten thousand tokens on even a trivial task here, which makes the suite
+look stalled; `"num_predict"` keeps a model that falls into a repetition loop
+from running until the timeout. Set `GARDEN_LLM_THINK=true` to test the
+reasoning path, and give it a much longer `timeout`.
 =#
 
 using Test
@@ -30,9 +37,12 @@ if !LIVE_LLM_TESTS
 else
     live_model_tag = get(ENV, "GARDEN_LLM_MODEL", "qwen3.5:4b")
     live_host = get(ENV, "GARDEN_LLM_HOST", "http://localhost:11434")
+    live_think = lowercase(get(ENV, "GARDEN_LLM_THINK", "false")) in ("1", "true", "yes")
     live_model = LiveLLM.OllamaModel(
         live_model_tag;
-        host = live_host, options = Dict("temperature" => 0.7, "num_ctx" => 16384), timeout = 600
+        host = live_host, think = live_think,
+        options = Dict("temperature" => 0.7, "num_ctx" => 16384, "num_predict" => 2048),
+        timeout = 600
     )
 
     @testset verbose = true "LLMBaseline live ($live_model_tag)" begin
